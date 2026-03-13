@@ -15,6 +15,8 @@ class SessionStore {
     var openTabIDs: [UUID] = []
     var activeTabID: UUID?
 
+    var editingSessionID: UUID?
+    private var configLoaded = false
     private var saveTask: Task<Void, Never>?
 
     private static var storageURL: URL {
@@ -29,6 +31,7 @@ class SessionStore {
         if folders.isEmpty {
             folders = [SessionFolder(name: "Sessions")]
         }
+        configLoaded = true
     }
 
     func load() {
@@ -47,6 +50,9 @@ class SessionStore {
     }
 
     func save() {
+        // Don't save if we haven't loaded yet (prevents overwriting with empty data)
+        guard configLoaded else { return }
+
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(500))

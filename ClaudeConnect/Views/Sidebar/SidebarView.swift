@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(SessionStore.self) private var store
-    @State private var editingSession: SessionConfiguration?
+    @Environment(\.openWindow) private var openWindow
     @State private var showNewFolder = false
     @State private var newFolderName = ""
 
@@ -18,7 +18,8 @@ struct SidebarView: View {
             ToolbarItemGroup {
                 Button {
                     let session = store.addSession()
-                    editingSession = session
+                    store.editingSessionID = session.id
+                    openWindow(id: "session-editor")
                 } label: {
                     Label("New Session", systemImage: "plus")
                 }
@@ -29,9 +30,6 @@ struct SidebarView: View {
                     Label("New Folder", systemImage: "folder.badge.plus")
                 }
             }
-        }
-        .sheet(item: $editingSession) { session in
-            SessionEditorView(session: session)
         }
         .alert("New Folder", isPresented: $showNewFolder) {
             TextField("Folder name", text: $newFolderName)
@@ -76,10 +74,8 @@ struct SidebarView: View {
             }
             .contextMenu {
                 Button("Rename...") {
-                    // Simple rename via alert would need another state; using inline for now
                     let name = folder.name
-                    let newName = name // placeholder - real rename happens via context
-                    store.renameFolder(id: folder.id, name: newName)
+                    store.renameFolder(id: folder.id, name: name)
                 }
                 if folder.id != store.folders.first?.id {
                     Divider()
@@ -122,7 +118,8 @@ struct SidebarView: View {
                 store.openTab(sessionID: session.id)
             }
             Button("Edit...") {
-                editingSession = session
+                store.editingSessionID = session.id
+                openWindow(id: "session-editor")
             }
             Button("Duplicate") {
                 store.duplicateSession(id: session.id)

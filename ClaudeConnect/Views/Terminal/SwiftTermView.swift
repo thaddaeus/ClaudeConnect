@@ -8,9 +8,10 @@ struct SwiftTermView: NSViewRepresentable {
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let terminalView = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
 
-        // Configure appearance
-        let fontSize: CGFloat = 13
-        terminalView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        // Configure appearance - match Terminal.app default (Menlo 11pt)
+        let fontSize: CGFloat = 11
+        terminalView.font = NSFont(name: "MenloRegular", size: fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         terminalView.nativeBackgroundColor = DefaultTheme.background
         terminalView.nativeForegroundColor = DefaultTheme.foreground
         terminalView.optionAsMetaKey = true

@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""
+claude-connect-tab - Open a new tab in ClaudeConnect
+
+Usage:
+  claude-connect-tab [options]
+
+Options:
+  --name NAME              Tab name (default: "Dynamic Session")
+  --cwd PATH               Working directory
+  --model MODEL            Claude model (opus, sonnet, haiku)
+  --permission-mode MODE   Permission mode (default, plan, auto-edit, full-auto, bypassPermissions)
+  --effort LEVEL           Effort level (low, medium, high, max)
+  --system-prompt TEXT     Replace system prompt
+  --append-system-prompt TEXT  Append to system prompt
+  --prompt TEXT             Initial prompt (visible, sent as first message)
+  --mcp-config PATH        MCP config file path
+  --flag FLAG              Additional CLI flag (can be repeated)
+  --color HEX              Tab color (e.g. "#FF2D55")
+  --continue               Continue previous session
+
+Examples:
+  claude-connect-tab --name "Issue #42" --cwd ~/projects/myapp --prompt "Summarize issue 42"
+  claude-connect-tab --cwd /tmp/worktree --permission-mode plan --flag "--dangerously-skip-permissions"
+"""
+
+import json
+import os
+import sys
+import time
+
+COMMANDS_DIR = os.path.expanduser("~/Library/Application Support/ClaudeConnect/commands")
+os.makedirs(COMMANDS_DIR, exist_ok=True)
+
+def main():
+    cmd = {"action": "open-tab"}
+    flags = []
+    args = sys.argv[1:]
+    i = 0
+
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-h", "--help"):
+            print(__doc__)
+            sys.exit(0)
+        elif arg == "--name" and i + 1 < len(args):
+            cmd["name"] = args[i + 1]; i += 2
+        elif arg == "--cwd" and i + 1 < len(args):
+            cmd["workingDirectory"] = os.path.expanduser(args[i + 1]); i += 2
+        elif arg == "--model" and i + 1 < len(args):
+            cmd["model"] = args[i + 1]; i += 2
+        elif arg == "--permission-mode" and i + 1 < len(args):
+            cmd["permissionMode"] = args[i + 1]; i += 2
+        elif arg == "--effort" and i + 1 < len(args):
+            cmd["effort"] = args[i + 1]; i += 2
+        elif arg == "--system-prompt" and i + 1 < len(args):
+            cmd["systemPrompt"] = args[i + 1]; i += 2
+        elif arg == "--append-system-prompt" and i + 1 < len(args):
+            cmd["appendSystemPrompt"] = args[i + 1]; i += 2
+        elif arg == "--prompt" and i + 1 < len(args):
+            cmd["initialPrompt"] = args[i + 1]; i += 2
+        elif arg == "--mcp-config" and i + 1 < len(args):
+            cmd["mcpConfigPath"] = args[i + 1]; i += 2
+        elif arg == "--flag" and i + 1 < len(args):
+            flags.append(args[i + 1]); i += 2
+        elif arg == "--color" and i + 1 < len(args):
+            cmd["tabColor"] = args[i + 1]; i += 2
+        elif arg == "--continue":
+            cmd["continueSession"] = True; i += 1
+        else:
+            print(f"Unknown option: {arg}", file=sys.stderr)
+            sys.exit(1)
+
+    if flags:
+        cmd["additionalFlags"] = flags
+
+    filename = f"{int(time.time())}-{os.getpid()}.json"
+    filepath = os.path.join(COMMANDS_DIR, filename)
+
+    # Write to tmp then rename for atomicity
+    tmppath = filepath + ".tmp"
+    with open(tmppath, "w") as f:
+        json.dump(cmd, f, indent=2)
+    os.rename(tmppath, filepath)
+
+    print(f"Tab command sent to ClaudeConnect")
+
+if __name__ == "__main__":
+    main()

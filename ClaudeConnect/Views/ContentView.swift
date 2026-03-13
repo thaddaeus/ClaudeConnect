@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(SessionStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -11,7 +12,6 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .onAppear {
-            // Auto-start sessions
             for session in store.sessions where session.autoStart {
                 store.openTab(sessionID: session.id)
             }
