@@ -3,6 +3,7 @@ import SwiftTerm
 
 struct SwiftTermView: NSViewRepresentable {
     let configuration: SessionConfiguration
+    let isActive: Bool
     var onProcessTerminated: ((Int32?) -> Void)?
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
@@ -33,7 +34,12 @@ struct SwiftTermView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        // Appearance updates can go here
+        // When this terminal becomes the active tab, give it focus
+        if isActive {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {

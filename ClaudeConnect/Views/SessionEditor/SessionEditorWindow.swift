@@ -32,5 +32,17 @@ struct SessionEditorWindow: View {
                     .frame(width: 520, height: 400)
             }
         }
+        .onAppear {
+            // Ensure this window can receive keyboard input (critical for swift run)
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+                if let window = NSApp.windows.first(where: {
+                    $0.identifier?.rawValue.contains("session-editor") == true
+                        || $0.title == "Edit Session"
+                }) {
+                    window.makeKeyAndOrderFront(nil)
+                }
+            }
+        }
     }
 }

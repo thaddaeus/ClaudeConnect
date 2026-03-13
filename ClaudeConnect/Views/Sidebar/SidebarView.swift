@@ -5,6 +5,8 @@ struct SidebarView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var showNewFolder = false
     @State private var newFolderName = ""
+    @State private var renamingFolderID: UUID?
+    @State private var renameFolderName = ""
 
     var body: some View {
         List {
@@ -14,6 +16,10 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .frame(minWidth: 200)
+        .onTapGesture {
+            // Resign terminal first responder so text fields can receive input
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -41,6 +47,21 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) {
                 newFolderName = ""
+            }
+        }
+        .alert("Rename Folder", isPresented: Binding(
+            get: { renamingFolderID != nil },
+            set: { if !$0 { renamingFolderID = nil } }
+        )) {
+            TextField("Folder name", text: $renameFolderName)
+            Button("Rename") {
+                if let id = renamingFolderID, !renameFolderName.isEmpty {
+                    store.renameFolder(id: id, name: renameFolderName)
+                }
+                renamingFolderID = nil
+            }
+            Button("Cancel", role: .cancel) {
+                renamingFolderID = nil
             }
         }
     }
@@ -74,8 +95,8 @@ struct SidebarView: View {
             }
             .contextMenu {
                 Button("Rename...") {
-                    let name = folder.name
-                    store.renameFolder(id: folder.id, name: name)
+                    renameFolderName = folder.name
+                    renamingFolderID = folder.id
                 }
                 if folder.id != store.folders.first?.id {
                     Divider()

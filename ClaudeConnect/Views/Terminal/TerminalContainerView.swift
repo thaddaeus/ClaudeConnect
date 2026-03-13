@@ -36,6 +36,7 @@ struct TerminalContainerView: View {
         ZStack {
             SwiftTermView(
                 configuration: config,
+                isActive: store.activeTabID == sessionID,
                 onProcessTerminated: { exitCode in
                     tabStates[sessionID] = .terminated(exitCode)
                 }

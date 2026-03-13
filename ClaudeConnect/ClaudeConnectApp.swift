@@ -11,7 +11,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.activate(ignoringOtherApps: true)
+        // Delay activation to ensure windows are ready (swift run needs this)
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Re-activate on every focus gain to ensure proper keyboard handling
+        // when launched as a CLI process via swift run
+        NSApp.setActivationPolicy(.regular)
     }
 }
 
@@ -20,16 +29,19 @@ struct ClaudeConnectApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var store = SessionStore()
     @State private var commandWatcher = CommandWatcher()
+    @State private var updateChecker = UpdateChecker()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(store)
+                .environment(updateChecker)
                 .task {
                     commandWatcher.onCommand = { command in
                         handleCommand(command)
                     }
                     commandWatcher.start()
+                    updateChecker.checkForUpdates()
                 }
         }
         .windowStyle(.titleBar)
