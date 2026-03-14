@@ -89,11 +89,23 @@ echo "  cp \"$APP_BUNDLE/Contents/Resources/claude-connect-tab\" ~/.local/bin/"
 echo "  chmod +x ~/.local/bin/claude-connect-tab"
 echo ""
 
-# Create zip for distribution
-if command -v ditto &>/dev/null; then
-    ZIP_PATH="$BUILD_DIR/$APP_NAME-v$VERSION.zip"
-    cd "$BUILD_DIR"
-    ditto -c -k --keepParent "$APP_NAME.app" "$APP_NAME-v$VERSION.zip"
-    echo "📦 Distribution zip: $ZIP_PATH"
-    echo "   Upload this to GitHub Releases"
-fi
+# Create DMG for distribution
+DMG_PATH="$BUILD_DIR/$APP_NAME-v$VERSION.dmg"
+DMG_TEMP="$BUILD_DIR/dmg-staging"
+rm -rf "$DMG_TEMP" "$DMG_PATH"
+mkdir -p "$DMG_TEMP"
+
+# Stage app and Applications symlink for drag-to-install
+cp -R "$APP_BUNDLE" "$DMG_TEMP/"
+ln -s /Applications "$DMG_TEMP/Applications"
+
+# Create DMG
+hdiutil create -volname "$APP_NAME v$VERSION" \
+    -srcfolder "$DMG_TEMP" \
+    -ov -format UDZO \
+    "$DMG_PATH" >/dev/null 2>&1
+
+rm -rf "$DMG_TEMP"
+
+echo "📦 Distribution DMG: $DMG_PATH"
+echo "   Upload this to GitHub Releases"
