@@ -23,7 +23,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct ClaudeConnectApp: App {
+struct ConsoleForgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var store = SessionStore()
     @State private var commandWatcher = CommandWatcher()
@@ -127,7 +127,7 @@ struct ClaudeConnectApp: App {
         let session = store.addSession(config)
         store.openTab(sessionID: session.id)
 
-        // Bring ClaudeConnect to the front
+        // Bring ConsoleForge to the front
         NSApp.activate(ignoringOtherApps: true)
     }
 }

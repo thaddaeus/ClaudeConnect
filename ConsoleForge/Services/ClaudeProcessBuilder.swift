@@ -103,13 +103,13 @@ struct ClaudeProcessBuilder {
             parts.append(contentsOf: ["--system-prompt", shellQuote(prompt)])
         }
 
-        // Build append system prompt: user's text + ClaudeConnect tab instructions if enabled
+        // Build append system prompt: user's text + ConsoleForge tab instructions if enabled
         var appendPromptParts: [String] = []
         if let prompt = config.appendSystemPrompt, !prompt.isEmpty {
             appendPromptParts.append(prompt)
         }
-        if config.openInClaudeConnect {
-            appendPromptParts.append(Self.claudeConnectTabPrompt)
+        if config.openInConsoleForge {
+            appendPromptParts.append(Self.consoleForgeTabPrompt)
         }
         if !appendPromptParts.isEmpty {
             parts.append(contentsOf: ["--append-system-prompt", shellQuote(appendPromptParts.joined(separator: "\n\n"))])
@@ -159,14 +159,14 @@ struct ClaudeProcessBuilder {
         )
     }
 
-    /// Instructions appended to the system prompt when "Open in ClaudeConnect" is enabled
-    private static let claudeConnectTabPrompt = """
-    IMPORTANT: You are running inside ClaudeConnect, a tabbed terminal app. \
+    /// Instructions appended to the system prompt when "Open in ConsoleForge" is enabled
+    private static let consoleForgeTabPrompt = """
+    IMPORTANT: You are running inside ConsoleForge, a tabbed terminal app. \
     When you need to open a new terminal tab (e.g. for worktrees, parallel tasks, or spawning sub-agents in separate terminals), \
-    you MUST use the `claude-connect-tab` CLI tool instead of osascript or Terminal.app. \
-    This ensures new tabs open inside ClaudeConnect rather than in a separate Terminal window.
+    you MUST use the `consoleforge-tab` CLI tool instead of osascript or Terminal.app. \
+    This ensures new tabs open inside ConsoleForge rather than in a separate Terminal window.
 
-    Usage: claude-connect-tab [options]
+    Usage: consoleforge-tab [options]
       --name NAME              Tab name
       --cwd PATH               Working directory
       --model MODEL            Claude model (opus, sonnet, haiku)
@@ -180,7 +180,7 @@ struct ClaudeProcessBuilder {
       --color HEX              Tab color (e.g. "#FF2D55")
       --continue               Continue previous session
 
-    Example: claude-connect-tab --name "Feature Work" --cwd /path/to/worktree --prompt "Implement the feature"
+    Example: consoleforge-tab --name "Feature Work" --cwd /path/to/worktree --prompt "Implement the feature"
     """
 
     /// Shell-quote a string to safely embed in a command

@@ -10,7 +10,7 @@ struct ContentView: View {
             if updateChecker.updateAvailable {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.down.circle.fill")
-                    Text("ClaudeConnect v\(updateChecker.latestVersion) is available.")
+                    Text("ConsoleForge v\(updateChecker.latestVersion) is available.")
                         .fontWeight(.medium)
                     Button("Download") {
                         if let url = URL(string: updateChecker.downloadURL) {

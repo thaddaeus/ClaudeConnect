@@ -92,7 +92,7 @@ struct SessionEditorView: View {
 
                             HStack(spacing: 4) {
                                 Toggle("Auto-start on launch", isOn: $session.autoStart)
-                                HelpTip(text: "Automatically open this session in a tab when ClaudeConnect starts.")
+                                HelpTip(text: "Automatically open this session in a tab when ConsoleForge starts.")
                             }
 
                             HStack(spacing: 4) {
@@ -101,8 +101,8 @@ struct SessionEditorView: View {
                             }
 
                             HStack(spacing: 4) {
-                                Toggle("Open new tabs in ClaudeConnect", isOn: $session.openInClaudeConnect)
-                                HelpTip(text: "When enabled, tells Claude to use claude-connect-tab to open new terminal tabs inside ClaudeConnect instead of opening Terminal.app. Essential for hub/worktree workflows.")
+                                Toggle("Open new tabs in ConsoleForge", isOn: $session.openInConsoleForge)
+                                HelpTip(text: "When enabled, tells Claude to use consoleforge-tab to open new terminal tabs inside ConsoleForge instead of opening Terminal.app. Essential for hub/worktree workflows.")
                             }
                         }
                         .padding(8)

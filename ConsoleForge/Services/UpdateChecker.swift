@@ -6,7 +6,7 @@ class UpdateChecker {
     var latestVersion = ""
     var downloadURL = ""
 
-    private static let repo = "thaddaeus/ClaudeConnect"
+    private static let repo = "thaddaeus/ConsoleForge"
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"

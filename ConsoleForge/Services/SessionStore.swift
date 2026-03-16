@@ -21,7 +21,7 @@ class SessionStore {
 
     private static var storageURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("ClaudeConnect", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("ConsoleForge", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("sessions.json")
     }

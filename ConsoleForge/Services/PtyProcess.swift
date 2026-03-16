@@ -8,7 +8,7 @@ class PtyProcess {
     private var io: DispatchIO?
     private var readSource: DispatchSourceRead?
     private var processMonitor: DispatchSourceProcess?
-    private let queue = DispatchQueue(label: "com.thaddaeus.claudeconnect.pty")
+    private let queue = DispatchQueue(label: "com.thaddaeus.consoleforge.pty")
     var onData: ((Data) -> Void)?
     var onExit: ((Int32?) -> Void)?
 

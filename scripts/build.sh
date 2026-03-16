@@ -1,20 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-# ClaudeConnect build script
+# ConsoleForge build script
 # Creates a signed, notarized .app bundle and DMG from the SPM project
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/build"
-APP_NAME="ClaudeConnect"
+APP_NAME="ConsoleForge"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 VERSION="${1:-0.1.0}"
 BUILD_NUMBER="$(date +%Y%m%d%H%M)"
 
-SIGN_IDENTITY="Developer ID Application: Thaddaeus Johnson (F49T92KK73)"
-NOTARY_PROFILE="ClaudeConnect-Notary"
-ENTITLEMENTS="$PROJECT_DIR/ClaudeConnect.entitlements"
+SIGN_IDENTITY="${DEV_ID_APPLICATION:?Set DEV_ID_APPLICATION env var (e.g. 'Developer ID Application: Your Name (TEAMID)')}"
+NOTARY_PROFILE="${NOTARY_PROFILE_NAME:?Set NOTARY_PROFILE_NAME env var (e.g. 'MyApp-Notary')}"
+ENTITLEMENTS="$PROJECT_DIR/ConsoleForge.entitlements"
 
 echo "Building $APP_NAME v$VERSION (build $BUILD_NUMBER)..."
 
@@ -39,7 +39,7 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # Copy CLI tool into Resources for easy installation
-cp "$SCRIPT_DIR/claude-connect-tab" "$APP_BUNDLE/Contents/Resources/claude-connect-tab"
+cp "$SCRIPT_DIR/consoleforge-tab" "$APP_BUNDLE/Contents/Resources/consoleforge-tab"
 
 # Create Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
@@ -54,7 +54,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.thaddaeus.ClaudeConnect</string>
+    <string>com.thaddaeus.ConsoleForge</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -94,7 +94,7 @@ codesign --verify --deep --strict "$APP_BUNDLE"
 echo "Signature verified."
 
 echo ""
-echo "✅ Built: $APP_BUNDLE"
+echo "Built: $APP_BUNDLE"
 echo "   Version: $VERSION (build $BUILD_NUMBER)"
 echo ""
 echo "To install:"
@@ -102,8 +102,8 @@ echo "  cp -R \"$APP_BUNDLE\" /Applications/"
 echo ""
 echo "To install CLI tool:"
 echo "  mkdir -p ~/.local/bin"
-echo "  cp \"$APP_BUNDLE/Contents/Resources/claude-connect-tab\" ~/.local/bin/"
-echo "  chmod +x ~/.local/bin/claude-connect-tab"
+echo "  cp \"$APP_BUNDLE/Contents/Resources/consoleforge-tab\" ~/.local/bin/"
+echo "  chmod +x ~/.local/bin/consoleforge-tab"
 echo ""
 
 # Create DMG for distribution
@@ -140,6 +140,6 @@ echo "Stapling notarization ticket..."
 xcrun stapler staple "$DMG_PATH"
 
 echo ""
-echo "📦 Distribution DMG: $DMG_PATH"
+echo "Distribution DMG: $DMG_PATH"
 echo "   Signed, notarized, and ready for distribution."
 echo "   Upload this to GitHub Releases."

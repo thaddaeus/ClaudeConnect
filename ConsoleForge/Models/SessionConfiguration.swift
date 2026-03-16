@@ -19,7 +19,7 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     var effortLevel: String?
     var additionalFlags: String = ""
     var continueSession: Bool = false
-    var openInClaudeConnect: Bool = false
+    var openInConsoleForge: Bool = false
     var folderID: UUID?
 
     // Custom decoder to handle missing keys from older sessions.json files
@@ -42,7 +42,7 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
         effortLevel = try c.decodeIfPresent(String.self, forKey: .effortLevel)
         additionalFlags = try c.decodeIfPresent(String.self, forKey: .additionalFlags) ?? ""
         continueSession = try c.decodeIfPresent(Bool.self, forKey: .continueSession) ?? false
-        openInClaudeConnect = try c.decodeIfPresent(Bool.self, forKey: .openInClaudeConnect) ?? false
+        openInConsoleForge = try c.decodeIfPresent(Bool.self, forKey: .openInConsoleForge) ?? false
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
     }
 

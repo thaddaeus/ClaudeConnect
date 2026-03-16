@@ -65,7 +65,7 @@ struct TerminalContainerView: View {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.tertiary)
-            Text("ClaudeConnect")
+            Text("ConsoleForge")
                 .font(.title)
                 .fontWeight(.semibold)
             Text("Create a session in the sidebar,\nthen double-click to launch.")

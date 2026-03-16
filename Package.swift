@@ -2,19 +2,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClaudeConnect",
+    name: "ConsoleForge",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "ClaudeConnect", targets: ["ClaudeConnect"]),
+        .executable(name: "ConsoleForge", targets: ["ConsoleForge"]),
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.0.0"),
     ],
     targets: [
         .executableTarget(
-            name: "ClaudeConnect",
+            name: "ConsoleForge",
             dependencies: ["SwiftTerm"],
-            path: "ClaudeConnect",
+            path: "ConsoleForge",
             exclude: ["Assets.xcassets"]
         ),
     ]

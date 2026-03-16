@@ -24,7 +24,7 @@ class CommandWatcher {
 
     static var commandsDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("ClaudeConnect/commands", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("ConsoleForge/commands", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
