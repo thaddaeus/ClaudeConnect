@@ -99,6 +99,11 @@ struct SessionEditorView: View {
                                 Toggle("Continue previous session", isOn: $session.continueSession)
                                 HelpTip(text: "Resume the last conversation instead of starting fresh. Uses the --continue flag.")
                             }
+
+                            HStack(spacing: 4) {
+                                Toggle("Open new tabs in ClaudeConnect", isOn: $session.openInClaudeConnect)
+                                HelpTip(text: "When enabled, tells Claude to use claude-connect-tab to open new terminal tabs inside ClaudeConnect instead of opening Terminal.app. Essential for hub/worktree workflows.")
+                            }
                         }
                         .padding(8)
                     }

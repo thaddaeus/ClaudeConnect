@@ -6,6 +6,7 @@ class PtyProcess {
     let masterFd: Int32
     let pid: pid_t
     private var io: DispatchIO?
+    private var readSource: DispatchSourceRead?
     private var processMonitor: DispatchSourceProcess?
     private let queue = DispatchQueue(label: "com.thaddaeus.claudeconnect.pty")
     var onData: ((Data) -> Void)?
@@ -47,8 +48,11 @@ class PtyProcess {
         let argv: [String] = [executable] + args
         let cArgv: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
 
-        // Build envp
-        let envStrings = environment ?? ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        // Build envp — ensure TERM is set for proper terminal emulation
+        var envStrings = environment ?? ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        if !envStrings.contains(where: { $0.hasPrefix("TERM=") }) {
+            envStrings.append("TERM=xterm-256color")
+        }
         let cEnvp: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) } + [nil]
 
         // Spawn
@@ -89,16 +93,26 @@ class PtyProcess {
         io = DispatchIO(type: .stream, fileDescriptor: master, queue: queue) { fd in
             close(fd)
         }
-        io?.setLimit(lowWater: 1)
-        io?.read(offset: 0, length: Int.max, queue: queue) { [weak self] done, data, error in
-            if let data = data, !data.isEmpty {
-                let bytes = Data(data)
-                self?.onData?(bytes)
+        // Use raw read(2) on a dispatch source for better throughput.
+        // DispatchIO's incremental read with lowWater=1 causes excessive main-thread dispatches.
+        let readSource = DispatchSource.makeReadSource(fileDescriptor: master, queue: queue)
+        readSource.setEventHandler { [weak self] in
+            let bufSize = 8192
+            let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
+            let n = read(master, buf, bufSize)
+            if n > 0 {
+                let data = Data(bytes: buf, count: n)
+                self?.onData?(data)
             }
-            if done || error != 0 {
-                // PTY closed
+            buf.deallocate()
+            if n <= 0 {
+                // PTY closed or error
+                readSource.cancel()
             }
         }
+        readSource.setCancelHandler { /* fd closed by DispatchIO cleanup */ }
+        readSource.resume()
+        self.readSource = readSource
     }
 
     func write(_ data: Data) {
@@ -123,6 +137,7 @@ class PtyProcess {
 
     deinit {
         processMonitor?.cancel()
+        readSource?.cancel()
         // DispatchIO.close() triggers the cleanup handler which closes masterFd
         // Do NOT close masterFd here — that races with DispatchIO and causes EV_VANISHED
         io?.close()

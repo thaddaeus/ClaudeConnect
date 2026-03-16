@@ -51,8 +51,16 @@ struct ClaudeProcessBuilder {
             parts.append(contentsOf: ["--system-prompt", shellQuote(prompt)])
         }
 
+        // Build append system prompt: user's text + ClaudeConnect tab instructions if enabled
+        var appendPromptParts: [String] = []
         if let prompt = config.appendSystemPrompt, !prompt.isEmpty {
-            parts.append(contentsOf: ["--append-system-prompt", shellQuote(prompt)])
+            appendPromptParts.append(prompt)
+        }
+        if config.openInClaudeConnect {
+            appendPromptParts.append(Self.claudeConnectTabPrompt)
+        }
+        if !appendPromptParts.isEmpty {
+            parts.append(contentsOf: ["--append-system-prompt", shellQuote(appendPromptParts.joined(separator: "\n\n"))])
         }
 
         if let tools = config.allowedTools, !tools.isEmpty {
@@ -89,14 +97,39 @@ struct ClaudeProcessBuilder {
         let command = parts.joined(separator: " ")
 
         // Spawn the user's login shell which will resolve PATH and run claude
-        // Using -l for login shell (loads .zprofile/.zshrc), -i for interactive, -c for command
+        // Using -l for login shell (loads .zprofile for PATH), -c for command
+        // Avoid -i (interactive) which loads .zshrc plugins/completions and slows startup
         return ProcessParams(
             executable: env.shell,
-            args: ["-l", "-i", "-c", command],
+            args: ["-l", "-c", command],
             environment: nil,  // Let the login shell set up its own environment
             workingDirectory: workDir
         )
     }
+
+    /// Instructions appended to the system prompt when "Open in ClaudeConnect" is enabled
+    private static let claudeConnectTabPrompt = """
+    IMPORTANT: You are running inside ClaudeConnect, a tabbed terminal app. \
+    When you need to open a new terminal tab (e.g. for worktrees, parallel tasks, or spawning sub-agents in separate terminals), \
+    you MUST use the `claude-connect-tab` CLI tool instead of osascript or Terminal.app. \
+    This ensures new tabs open inside ClaudeConnect rather than in a separate Terminal window.
+
+    Usage: claude-connect-tab [options]
+      --name NAME              Tab name
+      --cwd PATH               Working directory
+      --model MODEL            Claude model (opus, sonnet, haiku)
+      --permission-mode MODE   Permission mode (default, plan, auto-edit, full-auto, bypassPermissions)
+      --effort LEVEL           Effort level (low, medium, high, max)
+      --system-prompt TEXT     Replace system prompt
+      --append-system-prompt TEXT  Append to system prompt
+      --prompt TEXT             Initial prompt (sent as first message)
+      --mcp-config PATH        MCP config file path
+      --flag FLAG              Additional CLI flag (can be repeated)
+      --color HEX              Tab color (e.g. "#FF2D55")
+      --continue               Continue previous session
+
+    Example: claude-connect-tab --name "Feature Work" --cwd /path/to/worktree --prompt "Implement the feature"
+    """
 
     /// Shell-quote a string to safely embed in a command
     private static func shellQuote(_ s: String) -> String {

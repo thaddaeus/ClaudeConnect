@@ -19,7 +19,34 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     var effortLevel: String?
     var additionalFlags: String = ""
     var continueSession: Bool = false
+    var openInClaudeConnect: Bool = false
     var folderID: UUID?
+
+    // Custom decoder to handle missing keys from older sessions.json files
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "New Session"
+        workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory) ?? "~"
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        allowedTools = try c.decodeIfPresent([String].self, forKey: .allowedTools)
+        disallowedTools = try c.decodeIfPresent([String].self, forKey: .disallowedTools)
+        systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
+        appendSystemPrompt = try c.decodeIfPresent(String.self, forKey: .appendSystemPrompt)
+        initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt)
+        permissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
+        mcpConfigPath = try c.decodeIfPresent(String.self, forKey: .mcpConfigPath)
+        autoStart = try c.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false
+        tabColorHex = try c.decodeIfPresent(String.self, forKey: .tabColorHex) ?? "#007AFF"
+        tabIconName = try c.decodeIfPresent(String.self, forKey: .tabIconName) ?? "terminal"
+        effortLevel = try c.decodeIfPresent(String.self, forKey: .effortLevel)
+        additionalFlags = try c.decodeIfPresent(String.self, forKey: .additionalFlags) ?? ""
+        continueSession = try c.decodeIfPresent(Bool.self, forKey: .continueSession) ?? false
+        openInClaudeConnect = try c.decodeIfPresent(Bool.self, forKey: .openInClaudeConnect) ?? false
+        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
+    }
+
+    init() {}
 
     enum PermissionMode: String, Codable, CaseIterable, Identifiable {
         case `default` = "default"
