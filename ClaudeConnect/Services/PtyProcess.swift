@@ -85,8 +85,10 @@ class PtyProcess {
         }
         processMonitor?.resume()
 
-        // Read from master PTY
-        io = DispatchIO(type: .stream, fileDescriptor: master, queue: queue) { _ in }
+        // Read from master PTY — cleanup handler closes the fd when DispatchIO is done
+        io = DispatchIO(type: .stream, fileDescriptor: master, queue: queue) { fd in
+            close(fd)
+        }
         io?.setLimit(lowWater: 1)
         io?.read(offset: 0, length: Int.max, queue: queue) { [weak self] done, data, error in
             if let data = data, !data.isEmpty {
@@ -121,8 +123,9 @@ class PtyProcess {
 
     deinit {
         processMonitor?.cancel()
+        // DispatchIO.close() triggers the cleanup handler which closes masterFd
+        // Do NOT close masterFd here — that races with DispatchIO and causes EV_VANISHED
         io?.close()
-        close(masterFd)
     }
 
     enum PtyError: Error {
