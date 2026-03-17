@@ -16,6 +16,9 @@ class SessionStore {
     var activeTabID: UUID?
 
     var editingSessionID: UUID?
+    /// IDs of ephemeral sessions that were restored from a previous run.
+    /// These get `--continue` to resume the Claude session.
+    private(set) var resumingSessionIDs: Set<UUID> = []
     private var configLoaded = false
     private var saveTask: Task<Void, Never>?
 
@@ -42,8 +45,17 @@ class SessionStore {
             let decoded = try JSONDecoder().decode(SessionStoreData.self, from: data)
             sessions = decoded.sessions
             folders = decoded.folders
-            openTabIDs = decoded.openTabIDs
-            activeTabID = decoded.activeTabID
+            let sessionIDs = Set(decoded.sessions.map(\.id))
+            openTabIDs = decoded.openTabIDs.filter { sessionIDs.contains($0) }
+            activeTabID = decoded.activeTabID.flatMap { sessionIDs.contains($0) ? $0 : nil }
+                ?? openTabIDs.last
+
+            // Mark ephemeral sessions that were open — they'll resume with --continue
+            for session in sessions where session.isEphemeral {
+                if openTabIDs.contains(session.id) {
+                    resumingSessionIDs.insert(session.id)
+                }
+            }
         } catch {
             print("Failed to load sessions: \(error)")
         }
@@ -112,7 +124,7 @@ class SessionStore {
     }
 
     func sessionsInFolder(_ folderID: UUID?) -> [SessionConfiguration] {
-        sessions.filter { $0.folderID == folderID }
+        sessions.filter { $0.folderID == folderID && !$0.isEphemeral }
     }
 
     // MARK: - Folder CRUD
@@ -155,8 +167,36 @@ class SessionStore {
         save()
     }
 
+    /// Open an ephemeral tab — persisted to disk but hidden from sidebar.
+    func openEphemeralTab(_ config: SessionConfiguration) {
+        var session = config
+        session.isEphemeral = true
+        sessions.append(session)
+        if !openTabIDs.contains(session.id) {
+            openTabIDs.append(session.id)
+        }
+        activeTabID = session.id
+        save()
+    }
+
+    /// Save an ephemeral tab as a permanent session (promotes to sidebar).
+    func saveEphemeralSession(id: UUID) {
+        if let idx = sessions.firstIndex(where: { $0.id == id }) {
+            sessions[idx].isEphemeral = false
+            if sessions[idx].folderID == nil {
+                sessions[idx].folderID = folders.first?.id
+            }
+            save()
+        }
+    }
+
     func closeTab(sessionID: UUID) {
         openTabIDs.removeAll { $0 == sessionID }
+        // Remove ephemeral sessions when their tab is closed
+        if let idx = sessions.firstIndex(where: { $0.id == sessionID && $0.isEphemeral }) {
+            sessions.remove(at: idx)
+        }
+        resumingSessionIDs.remove(sessionID)
         if activeTabID == sessionID {
             activeTabID = openTabIDs.last
         }
@@ -190,6 +230,10 @@ class SessionStore {
 
     func session(for id: UUID) -> SessionConfiguration? {
         sessions.first { $0.id == id }
+    }
+
+    func isEphemeral(_ id: UUID) -> Bool {
+        sessions.first { $0.id == id }?.isEphemeral ?? false
     }
 
     static let defaultColors = [

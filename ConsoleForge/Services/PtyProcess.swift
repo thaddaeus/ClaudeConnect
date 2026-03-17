@@ -21,6 +21,15 @@ class PtyProcess {
             throw PtyError.openptyFailed
         }
 
+        // Get slave device path before closing — needed to reopen in child
+        // so that the open() after setsid sets it as the controlling terminal.
+        guard let slaveName = ptsname(master) else {
+            close(master)
+            close(slave)
+            throw PtyError.openptyFailed
+        }
+        let slaveDevicePath = String(cString: slaveName)
+
         self.masterFd = master
 
         // Set up posix_spawn attributes
@@ -30,14 +39,15 @@ class PtyProcess {
         let flags: Int16 = Int16(POSIX_SPAWN_SETSID)
         posix_spawnattr_setflags(&spawnAttr, flags)
 
-        // Set up file actions: map slave PTY to stdin/stdout/stderr
+        // Set up file actions: reopen slave PTY by path after setsid to set controlling terminal.
+        // On macOS/BSD, dup2'ing an inherited fd does NOT set the controlling terminal —
+        // only open() on a terminal device after setsid does.
         var fileActions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&fileActions)
-        posix_spawn_file_actions_adddup2(&fileActions, slave, STDIN_FILENO)
-        posix_spawn_file_actions_adddup2(&fileActions, slave, STDOUT_FILENO)
-        posix_spawn_file_actions_adddup2(&fileActions, slave, STDERR_FILENO)
-        posix_spawn_file_actions_addclose(&fileActions, slave)
         posix_spawn_file_actions_addclose(&fileActions, master)
+        posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, slaveDevicePath, O_RDWR, 0)
+        posix_spawn_file_actions_adddup2(&fileActions, STDIN_FILENO, STDOUT_FILENO)
+        posix_spawn_file_actions_adddup2(&fileActions, STDIN_FILENO, STDERR_FILENO)
 
         // Change directory if specified
         if let dir = workingDirectory {
@@ -48,12 +58,34 @@ class PtyProcess {
         let argv: [String] = [executable] + args
         let cArgv: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
 
-        // Build envp — ensure TERM is set for proper terminal emulation
+        // Build envp — ensure TERM and PATH are set for proper terminal emulation.
+        // macOS GUI apps have a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin).
+        // Augment it with directories where claude and consoleforge-tab live.
         var envStrings = environment ?? ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
         if !envStrings.contains(where: { $0.hasPrefix("TERM=") }) {
             envStrings.append("TERM=xterm-256color")
         }
+        // Prepend user tool directories to PATH so the login shell finds them immediately
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extraPaths = [
+            "\(home)/.local/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            Bundle.main.resourcePath,  // app bundle Resources (consoleforge-tab)
+        ].compactMap { $0 }
+        if let pathIdx = envStrings.firstIndex(where: { $0.hasPrefix("PATH=") }) {
+            let existing = String(envStrings[pathIdx].dropFirst(5))
+            envStrings[pathIdx] = "PATH=" + (extraPaths + [existing]).joined(separator: ":")
+        } else {
+            envStrings.append("PATH=" + (extraPaths + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":"))
+        }
         let cEnvp: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) } + [nil]
+
+        // Close slave in parent BEFORE spawn — this is critical!
+        // The child will reopen it by path via addopen. If the parent still holds the slave
+        // open at spawn time, the kernel sees TS_ISOPEN and won't set it as the controlling
+        // terminal when the child opens it.
+        close(slave)
 
         // Spawn
         var childPid: pid_t = 0
@@ -64,9 +96,6 @@ class PtyProcess {
         for ptr in cEnvp { free(ptr) }
         posix_spawn_file_actions_destroy(&fileActions)
         posix_spawnattr_destroy(&spawnAttr)
-
-        // Close slave in parent
-        close(slave)
 
         guard spawnResult == 0 else {
             close(master)

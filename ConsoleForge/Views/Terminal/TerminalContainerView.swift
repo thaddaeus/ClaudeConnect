@@ -32,10 +32,20 @@ struct TerminalContainerView: View {
     @ViewBuilder
     private func terminalTab(for config: SessionConfiguration, sessionID: UUID) -> some View {
         let state = tabStates[sessionID] ?? .idle
+        // Ephemeral tabs restored after app restart resume their Claude session
+        let launchConfig: SessionConfiguration = {
+            if store.resumingSessionIDs.contains(sessionID) {
+                var c = config
+                c.continueSession = true
+                c.initialPrompt = nil
+                return c
+            }
+            return config
+        }()
 
         ZStack {
             SwiftTermView(
-                configuration: config,
+                configuration: launchConfig,
                 isActive: store.activeTabID == sessionID,
                 onProcessTerminated: { exitCode in
                     tabStates[sessionID] = .terminated(exitCode)

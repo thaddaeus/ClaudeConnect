@@ -124,8 +124,7 @@ struct ConsoleForgeApp: App {
         if let color = command.tabColor { config.tabColorHex = color }
         if let cont = command.continueSession { config.continueSession = cont }
 
-        let session = store.addSession(config)
-        store.openTab(sessionID: session.id)
+        store.openEphemeralTab(config)
 
         // Bring ConsoleForge to the front
         NSApp.activate(ignoringOtherApps: true)

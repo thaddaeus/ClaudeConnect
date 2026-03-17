@@ -11,7 +11,7 @@ struct SwiftTermView: NSViewRepresentable {
 
         // Configure appearance - match Terminal.app default (Menlo 11pt)
         let fontSize: CGFloat = 11
-        terminalView.font = NSFont(name: "MenloRegular", size: fontSize)
+        terminalView.font = NSFont(name: "Menlo", size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         terminalView.nativeBackgroundColor = DefaultTheme.background
         terminalView.nativeForegroundColor = DefaultTheme.foreground
@@ -43,11 +43,13 @@ struct SwiftTermView: NSViewRepresentable {
                 onTerminated?(exitCode)
             }
 
-            // Set initial window size
+            // Assign process to coordinator first so sizeChanged events aren't missed
+            context.coordinator.process = process
+
+            // Set initial window size (may still be the placeholder frame;
+            // the real size arrives via sizeChanged once SwiftUI lays out the view)
             let terminal = terminalView.getTerminal()
             process.setWindowSize(cols: terminal.cols, rows: terminal.rows)
-
-            context.coordinator.process = process
         } catch {
             print("Failed to start process: \(error)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -65,6 +67,11 @@ struct SwiftTermView: NSViewRepresentable {
                 nsView.window?.makeFirstResponder(nsView)
             }
         }
+
+        // Sync PTY size on every update — catches layout changes that happened
+        // before the process was assigned to the coordinator
+        let terminal = nsView.getTerminal()
+        context.coordinator.process?.setWindowSize(cols: terminal.cols, rows: terminal.rows)
     }
 
     func makeCoordinator() -> Coordinator {
