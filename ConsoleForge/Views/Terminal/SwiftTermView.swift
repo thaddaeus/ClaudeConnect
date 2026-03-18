@@ -61,6 +61,12 @@ struct SwiftTermView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
+        // Hide inactive tabs at the AppKit layer so CoreAnimation excludes them
+        // from the Metal render pipeline entirely. Using opacity(0) alone keeps
+        // the CALayer in the render tree, which can trigger Metal shader compilation
+        // and hit a macOS CoreAnimation bug (COREANIMATION Code 6) on long-running sessions.
+        nsView.isHidden = !isActive
+
         // When this terminal becomes the active tab, give it focus
         if isActive {
             DispatchQueue.main.async {
