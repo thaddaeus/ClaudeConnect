@@ -38,8 +38,12 @@ struct SwiftTermView: NSViewRepresentable {
             process.onData = { [weak terminalView] data in
                 // Detect bell character (0x07) — Claude sends this on permission prompts
                 let hasBell = data.contains(0x07)
+                // Strip kitty keyboard protocol push/set sequences (CSI > N u, CSI = N u)
+                // as a safety net — even if the query response was suppressed, some apps
+                // enable kitty mode directly without querying first.
+                let filtered = Self.stripKittyKeyboardEnable(data)
                 DispatchQueue.main.async {
-                    let bytes = ArraySlice(data)
+                    let bytes = ArraySlice(filtered)
                     terminalView?.feed(byteArray: bytes)
                     onOutput?()
                     if hasBell {
@@ -90,6 +94,40 @@ struct SwiftTermView: NSViewRepresentable {
         // ioctl(TIOCSWINSZ) and trigger hundreds of SIGWINCH per second.
     }
 
+    /// Strips kitty keyboard protocol push (CSI > N u) and set (CSI = N u)
+    /// sequences from PTY output so SwiftTerm never enters kitty keyboard mode.
+    /// Arrow keys then use legacy escape sequences that Claude CLI understands.
+    private static func stripKittyKeyboardEnable(_ data: Data) -> Data {
+        // Fast path: most data chunks contain no ESC at all
+        guard data.contains(0x1b) else { return data }
+
+        var result = Data()
+        result.reserveCapacity(data.count)
+        var i = data.startIndex
+
+        while i < data.endIndex {
+            if data[i] == 0x1b,                          // ESC
+               i + 2 < data.endIndex,
+               data[i + 1] == 0x5b,                      // [
+               (data[i + 2] == 0x3e || data[i + 2] == 0x3d) // > or =
+            {
+                // Scan past digits and semicolons (CSI parameters)
+                var j = i + 3
+                while j < data.endIndex &&
+                      ((data[j] >= 0x30 && data[j] <= 0x39) || data[j] == 0x3b) {
+                    j += 1
+                }
+                if j < data.endIndex && data[j] == 0x75 { // final byte 'u'
+                    i = j + 1  // skip the entire sequence
+                    continue
+                }
+            }
+            result.append(data[i])
+            i += 1
+        }
+        return result
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(onTerminated: onProcessTerminated)
     }
@@ -116,8 +154,30 @@ struct SwiftTermView: NSViewRepresentable {
         }
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
-            // User typed something — send to PTY
+            // Suppress kitty keyboard protocol query responses (ESC [ ? N u)
+            // so apps don't discover kitty support and enable it — Claude CLI's
+            // option picker doesn't handle kitty key sequences, causing arrow
+            // keys to display as raw text like [57419u instead of navigating.
+            if Self.isKittyKeyboardQueryResponse(data) {
+                return
+            }
             process?.write(Data(data))
+        }
+
+        /// Detects kitty keyboard protocol query response: ESC [ ? <digits> u
+        private static func isKittyKeyboardQueryResponse(_ data: ArraySlice<UInt8>) -> Bool {
+            guard data.count >= 5 else { return false }
+            let bytes = Array(data)
+            guard bytes[0] == 0x1b,  // ESC
+                  bytes[1] == 0x5b,  // [
+                  bytes[2] == 0x3f,  // ?
+                  bytes.last == 0x75 // u
+            else { return false }
+            // Everything between ? and u must be digits
+            for i in 3..<(bytes.count - 1) {
+                if bytes[i] < 0x30 || bytes[i] > 0x39 { return false }
+            }
+            return true
         }
 
         func scrolled(source: TerminalView, position: Double) {
