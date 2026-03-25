@@ -84,10 +84,10 @@ struct SwiftTermView: NSViewRepresentable {
             }
         }
 
-        // Sync PTY size on every update — catches layout changes that happened
-        // before the process was assigned to the coordinator
-        let terminal = nsView.getTerminal()
-        context.coordinator.process?.setWindowSize(cols: terminal.cols, rows: terminal.rows)
+        // Size sync is handled by the sizeChanged delegate. DO NOT call
+        // setWindowSize here — updateNSView fires on every SwiftUI state change
+        // (activity tracker updates on each PTY data chunk), which would spam
+        // ioctl(TIOCSWINSZ) and trigger hundreds of SIGWINCH per second.
     }
 
     func makeCoordinator() -> Coordinator {

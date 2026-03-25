@@ -159,8 +159,17 @@ class PtyProcess {
         }
     }
 
+    private var lastCols: Int = 0
+    private var lastRows: Int = 0
+
     func setWindowSize(cols: Int, rows: Int) {
         guard cols > 0, rows > 0 else { return }
+        // Only send TIOCSWINSZ when the size actually changes — the kernel
+        // sends SIGWINCH on every call regardless, and duplicate signals
+        // cause the child process to redraw unnecessarily.
+        guard cols != lastCols || rows != lastRows else { return }
+        lastCols = cols
+        lastRows = rows
         var size = winsize()
         size.ws_col = UInt16(cols)
         size.ws_row = UInt16(rows)
