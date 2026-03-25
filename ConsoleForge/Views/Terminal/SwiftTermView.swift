@@ -71,23 +71,34 @@ struct SwiftTermView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
+        let wasHidden = nsView.isHidden
+
         // Hide inactive tabs at the AppKit layer so CoreAnimation excludes them
         // from the Metal render pipeline entirely. Using opacity(0) alone keeps
         // the CALayer in the render tree, which can trigger Metal shader compilation
         // and hit a macOS CoreAnimation bug (COREANIMATION Code 6) on long-running sessions.
         nsView.isHidden = !isActive
 
-        // When this terminal becomes the active tab, give it focus
         if isActive {
-            DispatchQueue.main.async {
-                nsView.window?.makeFirstResponder(nsView)
+            if wasHidden {
+                // Tab was just revealed — the view needs a layout pass before
+                // we can read its correct dimensions. Delay size sync so the
+                // TerminalView is laid out at its real frame, then send the
+                // correct cols/rows + SIGWINCH to the child process.
+                DispatchQueue.main.async {
+                    nsView.window?.makeFirstResponder(nsView)
+                    let terminal = nsView.getTerminal()
+                    context.coordinator.process?.setWindowSize(cols: terminal.cols, rows: terminal.rows)
+                }
+            } else {
+                // Already visible — sync size immediately
+                DispatchQueue.main.async {
+                    nsView.window?.makeFirstResponder(nsView)
+                }
+                let terminal = nsView.getTerminal()
+                context.coordinator.process?.setWindowSize(cols: terminal.cols, rows: terminal.rows)
             }
         }
-
-        // Sync PTY size on every update — catches layout changes that happened
-        // before the process was assigned to the coordinator
-        let terminal = nsView.getTerminal()
-        context.coordinator.process?.setWindowSize(cols: terminal.cols, rows: terminal.rows)
     }
 
     func makeCoordinator() -> Coordinator {

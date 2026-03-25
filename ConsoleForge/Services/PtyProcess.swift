@@ -164,7 +164,11 @@ class PtyProcess {
         var size = winsize()
         size.ws_col = UInt16(cols)
         size.ws_row = UInt16(rows)
-        _ = ioctl(masterFd, TIOCSWINSZ, &size)
+        let result = ioctl(masterFd, TIOCSWINSZ, &size)
+        // Send SIGWINCH to the child process group so it re-queries terminal size
+        if result == 0 {
+            kill(-pid, SIGWINCH)
+        }
     }
 
     func terminate() {
