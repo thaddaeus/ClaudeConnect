@@ -73,5 +73,22 @@ struct TerminalTabBar: View {
         .onTapGesture {
             store.switchToTab(sessionID: session.id)
         }
+        .contextMenu {
+            if session.isEphemeral {
+                Button {
+                    store.saveEphemeralSession(id: session.id)
+                } label: {
+                    Label("Save to Sidebar", systemImage: "square.and.arrow.down")
+                }
+
+                Divider()
+            }
+
+            Button(role: .destructive) {
+                store.closeTab(sessionID: session.id)
+            } label: {
+                Label("Close Tab", systemImage: "xmark")
+            }
+        }
     }
 }
