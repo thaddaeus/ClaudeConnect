@@ -164,6 +164,21 @@ class SessionStore {
         }
     }
 
+    /// Reorder a session within (or into) a folder by placing it before a target session.
+    func reorderSession(id: UUID, toFolder folderID: UUID, before targetID: UUID?) {
+        guard let srcIdx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        var session = sessions.remove(at: srcIdx)
+        session.folderID = folderID
+
+        if let targetID,
+           let targetIdx = sessions.firstIndex(where: { $0.id == targetID }) {
+            sessions.insert(session, at: targetIdx)
+        } else {
+            sessions.append(session)
+        }
+        save()
+    }
+
     // MARK: - Tab Management
 
     func openTab(sessionID: UUID) {
@@ -224,6 +239,17 @@ class SessionStore {
               let idx = openTabIDs.firstIndex(of: current) else { return }
         let next = (idx + 1) % openTabIDs.count
         activeTabID = openTabIDs[next]
+    }
+
+    func moveTab(id: UUID, before targetID: UUID?) {
+        guard let srcIdx = openTabIDs.firstIndex(of: id) else { return }
+        openTabIDs.remove(at: srcIdx)
+        if let targetID, let targetIdx = openTabIDs.firstIndex(of: targetID) {
+            openTabIDs.insert(id, at: targetIdx)
+        } else {
+            openTabIDs.append(id)
+        }
+        save()
     }
 
     func previousTab() {

@@ -1,9 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TerminalTabBar: View {
     @Environment(SessionStore.self) private var store
     @Environment(TabActivityTracker.self) private var activityTracker
     @State private var hoveredTabID: UUID?
+    @State private var draggingTabID: UUID?
+    @State private var dropTargetTabID: UUID?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -11,6 +14,16 @@ struct TerminalTabBar: View {
                 ForEach(store.openTabIDs, id: \.self) { sessionID in
                     if let session = store.session(for: sessionID) {
                         tabButton(session: session, isActive: store.activeTabID == sessionID)
+                            .onDrag {
+                                draggingTabID = sessionID
+                                return NSItemProvider(object: sessionID.uuidString as NSString)
+                            }
+                            .onDrop(of: [.text], delegate: TabDropDelegate(
+                                tabID: sessionID,
+                                store: store,
+                                draggingTabID: $draggingTabID,
+                                dropTargetTabID: $dropTargetTabID
+                            ))
                     }
                 }
             }
@@ -65,6 +78,14 @@ struct TerminalTabBar: View {
                     .frame(height: 2)
             }
         }
+        .overlay(alignment: .leading) {
+            if dropTargetTabID == session.id {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 2)
+            }
+        }
+        .opacity(draggingTabID == session.id ? 0.4 : 1)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -90,5 +111,43 @@ struct TerminalTabBar: View {
                 Label("Close Tab", systemImage: "xmark")
             }
         }
+    }
+}
+
+// MARK: - Tab Drop Delegate
+
+struct TabDropDelegate: DropDelegate {
+    let tabID: UUID
+    let store: SessionStore
+    @Binding var draggingTabID: UUID?
+    @Binding var dropTargetTabID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            dropTargetTabID = tabID
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTargetTabID == tabID {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                dropTargetTabID = nil
+            }
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        if let dragging = draggingTabID, dragging != tabID {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                store.moveTab(id: dragging, before: tabID)
+            }
+        }
+        draggingTabID = nil
+        dropTargetTabID = nil
+        return true
     }
 }

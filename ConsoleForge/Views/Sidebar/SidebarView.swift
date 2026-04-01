@@ -27,6 +27,8 @@ struct SidebarView: View {
     @State private var renameFolderName = ""
     @State private var hoveredSessionID: UUID?
     @State private var dropTargetFolderID: UUID?
+    @State private var draggingSessionID: UUID?
+    @State private var dropTargetSessionID: UUID?
 
     var body: some View {
         List {
@@ -97,7 +99,17 @@ struct SidebarView: View {
             let folderSessions = store.sessionsInFolder(folder.id)
             ForEach(folderSessions) { session in
                 sessionRow(session)
-                    .draggable(SessionTransfer(sessionID: session.id.uuidString))
+                    .onDrag {
+                        draggingSessionID = session.id
+                        return NSItemProvider(object: session.id.uuidString as NSString)
+                    }
+                    .onDrop(of: [.text], delegate: SessionDropDelegate(
+                        sessionID: session.id,
+                        folderID: folder.id,
+                        store: store,
+                        draggingSessionID: $draggingSessionID,
+                        dropTargetSessionID: $dropTargetSessionID
+                    ))
             }
         } label: {
             HStack {
@@ -119,14 +131,12 @@ struct SidebarView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(dropTargetFolderID == folder.id ? Color.accentColor.opacity(0.2) : .clear)
             )
-            .dropDestination(for: SessionTransfer.self) { items, _ in
-                guard let item = items.first,
-                      let sessionID = UUID(uuidString: item.sessionID) else { return false }
-                store.moveSession(id: sessionID, toFolder: folder.id)
-                return true
-            } isTargeted: { targeted in
-                dropTargetFolderID = targeted ? folder.id : (dropTargetFolderID == folder.id ? nil : dropTargetFolderID)
-            }
+            .onDrop(of: [.text], delegate: FolderDropDelegate(
+                folderID: folder.id,
+                store: store,
+                draggingSessionID: $draggingSessionID,
+                dropTargetFolderID: $dropTargetFolderID
+            ))
             .contextMenu {
                 Button("Rename...") {
                     renameFolderName = folder.name
@@ -174,6 +184,14 @@ struct SidebarView: View {
         .onHover { hovering in
             hoveredSessionID = hovering ? session.id : nil
         }
+        .opacity(draggingSessionID == session.id ? 0.4 : 1)
+        .overlay(alignment: .top) {
+            if dropTargetSessionID == session.id {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             store.openTab(sessionID: session.id)
@@ -204,5 +222,74 @@ struct SidebarView: View {
                 store.deleteSession(id: session.id)
             }
         }
+    }
+}
+
+// MARK: - Drop Delegates
+
+struct SessionDropDelegate: DropDelegate {
+    let sessionID: UUID
+    let folderID: UUID
+    let store: SessionStore
+    @Binding var draggingSessionID: UUID?
+    @Binding var dropTargetSessionID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            dropTargetSessionID = sessionID
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTargetSessionID == sessionID {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                dropTargetSessionID = nil
+            }
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        if let dragging = draggingSessionID, dragging != sessionID {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                store.reorderSession(id: dragging, toFolder: folderID, before: sessionID)
+            }
+        }
+        draggingSessionID = nil
+        dropTargetSessionID = nil
+        return true
+    }
+}
+
+struct FolderDropDelegate: DropDelegate {
+    let folderID: UUID
+    let store: SessionStore
+    @Binding var draggingSessionID: UUID?
+    @Binding var dropTargetFolderID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        dropTargetFolderID = folderID
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTargetFolderID == folderID {
+            dropTargetFolderID = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        if let dragging = draggingSessionID {
+            store.reorderSession(id: dragging, toFolder: folderID, before: nil)
+        }
+        draggingSessionID = nil
+        dropTargetFolderID = nil
+        return true
     }
 }
