@@ -212,7 +212,10 @@ class SessionStore {
         }
     }
 
-    func closeTab(sessionID: UUID) {
+    func closeTab(sessionID: UUID, reason: TabEventWriter.CloseReason = .manual, exitCode: Int32? = nil) {
+        let tabName = sessions.first(where: { $0.id == sessionID })?.name ?? "Unknown"
+        TabEventWriter.emitClose(tabID: sessionID, tabName: tabName, reason: reason, exitCode: exitCode)
+
         openTabIDs.removeAll { $0 == sessionID }
         // Remove ephemeral sessions when their tab is closed
         if let idx = sessions.firstIndex(where: { $0.id == sessionID && $0.isEphemeral }) {

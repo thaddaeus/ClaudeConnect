@@ -43,6 +43,7 @@ struct ConsoleForgeApp: App {
                     }
                     commandWatcher.start()
                     updateChecker.checkForUpdates()
+                    TabEventWriter.cleanupStaleEvents()
 
                     // Prompt for Full Disk Access on first launch, or if not yet granted
                     if !hasFullDiskAccess() {
@@ -135,6 +136,10 @@ struct ConsoleForgeApp: App {
 
     private func handleOpenTab(_ command: TabCommand) {
         var config = SessionConfiguration()
+        // Use the CLI-provided tab ID so callers can reference it for --wait-for-close
+        if let tabIDStr = command.tabID, let tabID = UUID(uuidString: tabIDStr) {
+            config.id = tabID
+        }
         config.name = command.name ?? "Dynamic Session"
         config.workingDirectory = command.workingDirectory ?? "~"
         if let model = command.model { config.model = model }
@@ -160,7 +165,7 @@ struct ConsoleForgeApp: App {
         // Close by tab ID (used by --close-self)
         if let tabIDStr = command.tabID, let tabID = UUID(uuidString: tabIDStr) {
             activityTracker.removeTab(tabID: tabID)
-            store.closeTab(sessionID: tabID)
+            store.closeTab(sessionID: tabID, reason: .selfClose)
             return
         }
         // Close by name (used by --close --name)
@@ -169,7 +174,7 @@ struct ConsoleForgeApp: App {
                 $0.name == name && store.openTabIDs.contains($0.id)
             }) {
                 activityTracker.removeTab(tabID: session.id)
-                store.closeTab(sessionID: session.id)
+                store.closeTab(sessionID: session.id, reason: .selfClose)
             }
         }
     }

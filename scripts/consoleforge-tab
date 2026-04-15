@@ -6,12 +6,13 @@ Usage:
   consoleforge-tab [options]              Open a new tab
   consoleforge-tab --close-self           Close the current tab (from within a session)
   consoleforge-tab --close --name NAME    Close a tab by name
+  consoleforge-tab --wait-for-close ID    Block until the specified tab closes
 
 Open options:
   --name NAME              Tab name (default: "Dynamic Session")
   --cwd PATH               Working directory
   --model MODEL            Claude model (opus, sonnet, haiku)
-  --permission-mode MODE   Permission mode (default, plan, auto-edit, full-auto, bypassPermissions)
+  --permission-mode MODE   Permission mode (default, plan, acceptEdits, auto, dontAsk, bypassPermissions)
   --effort LEVEL           Effort level (low, medium, high, max)
   --system-prompt TEXT     Replace system prompt
   --append-system-prompt TEXT  Append to system prompt
@@ -26,19 +27,29 @@ Close options:
   --close                  Close a tab (requires --name)
   --name NAME              Name of the tab to close (with --close)
 
+Wait options:
+  --wait-for-close ID      Block until the tab with the given ID closes, then print the event JSON
+  --timeout SECONDS        Max time to wait (default: no timeout)
+
 Examples:
   consoleforge-tab --name "Issue #42" --cwd ~/projects/myapp --prompt "Summarize issue 42"
   consoleforge-tab --close-self
   consoleforge-tab --close --name "Feature Work"
+  consoleforge-tab --wait-for-close ABC-123-DEF
 """
 
 import json
 import os
 import sys
 import time
+import signal
 
-COMMANDS_DIR = os.path.expanduser("~/Library/Application Support/ConsoleForge/commands")
+APP_SUPPORT = os.path.expanduser("~/Library/Application Support/ConsoleForge")
+COMMANDS_DIR = os.path.join(APP_SUPPORT, "commands")
+EVENTS_DIR = os.path.join(APP_SUPPORT, "events")
 os.makedirs(COMMANDS_DIR, exist_ok=True)
+os.makedirs(EVENTS_DIR, exist_ok=True)
+
 
 def send_command(cmd):
     filename = f"{int(time.time())}-{os.getpid()}.json"
@@ -48,11 +59,106 @@ def send_command(cmd):
         json.dump(cmd, f, indent=2)
     os.rename(tmppath, filepath)
 
+
+def wait_for_close(tab_id, timeout=None):
+    """Block until an event file appears for the given tab ID."""
+    event_file = os.path.join(EVENTS_DIR, f"{tab_id}.json")
+    start = time.monotonic()
+
+    # Check if event already exists (tab closed before we started waiting)
+    if os.path.exists(event_file):
+        return read_and_cleanup(event_file)
+
+    # Use kqueue (macOS FSEvents via select.kqueue) for efficient watching
+    try:
+        return _wait_kqueue(tab_id, event_file, timeout, start)
+    except (ImportError, OSError):
+        # Fallback to polling
+        return _wait_poll(event_file, timeout, start)
+
+
+def _wait_kqueue(tab_id, event_file, timeout, start):
+    """Watch the events directory using kqueue for efficient file notification."""
+    import select
+
+    dirfd = os.open(EVENTS_DIR, os.O_RDONLY)
+    try:
+        kq = select.kqueue()
+        event = select.kevent(
+            dirfd,
+            filter=select.KQ_FILTER_VNODE,
+            flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
+            fflags=select.KQ_NOTE_WRITE,
+        )
+
+        while True:
+            remaining = None
+            if timeout is not None:
+                elapsed = time.monotonic() - start
+                remaining = max(0, timeout - elapsed)
+                if remaining <= 0:
+                    print("Timeout waiting for tab to close", file=sys.stderr)
+                    sys.exit(2)
+
+            events = kq.control([event], 1, remaining)
+            if os.path.exists(event_file):
+                return read_and_cleanup(event_file)
+    finally:
+        os.close(dirfd)
+
+
+def _wait_poll(event_file, timeout, start):
+    """Fallback: poll for the event file every 500ms."""
+    while True:
+        if timeout is not None:
+            elapsed = time.monotonic() - start
+            if elapsed >= timeout:
+                print("Timeout waiting for tab to close", file=sys.stderr)
+                sys.exit(2)
+        time.sleep(0.5)
+        if os.path.exists(event_file):
+            return read_and_cleanup(event_file)
+
+
+def read_and_cleanup(event_file):
+    """Read the event JSON, print it, clean up the file, and exit."""
+    with open(event_file) as f:
+        event = json.load(f)
+    try:
+        os.remove(event_file)
+    except OSError:
+        pass
+    print(json.dumps(event, indent=2))
+    return event
+
+
 def main():
     args = sys.argv[1:]
     i = 0
 
-    # Check for close modes first
+    # Handle --wait-for-close
+    if "--wait-for-close" in args:
+        wfc_idx = args.index("--wait-for-close")
+        if wfc_idx + 1 >= len(args):
+            print("Error: --wait-for-close requires a tab ID", file=sys.stderr)
+            sys.exit(1)
+        tab_id = args[wfc_idx + 1]
+        timeout = None
+        if "--timeout" in args:
+            t_idx = args.index("--timeout")
+            if t_idx + 1 < len(args):
+                timeout = float(args[t_idx + 1])
+
+        # Exit cleanly on SIGINT/SIGTERM
+        signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+        event = wait_for_close(tab_id, timeout)
+        # Exit with the tab's exit code if available
+        exit_code = event.get("exitCode")
+        sys.exit(exit_code if exit_code is not None else 0)
+
+    # Check for close modes
     if "--close-self" in args:
         tab_id = os.environ.get("CONSOLEFORGE_TAB_ID")
         if not tab_id:
@@ -113,8 +219,14 @@ def main():
     if flags:
         cmd["additionalFlags"] = flags
 
+    # Generate a tab ID so the caller can reference it for --wait-for-close
+    import uuid
+    tab_id = str(uuid.uuid4()).upper()
+    cmd["tabID"] = tab_id
+
     send_command(cmd)
-    print("Tab command sent to ConsoleForge")
+    print(f"tab-id: {tab_id}")
+
 
 if __name__ == "__main__":
     main()

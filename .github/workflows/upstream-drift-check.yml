@@ -1,0 +1,123 @@
+name: Upstream Drift Check
+
+on:
+  schedule:
+    # Every Monday at 9am UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  check-claude-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Claude CLI for changes
+        id: check
+        run: |
+          set -euo pipefail
+
+          # Get latest Claude CLI version from npm
+          LATEST=$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo "unknown")
+          KNOWN=$(jq -r '.["claude-cli"].last_known_version' .github/upstream-dependencies.json)
+
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "known=$KNOWN" >> "$GITHUB_OUTPUT"
+
+          if [ "$LATEST" = "$KNOWN" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Claude CLI version unchanged: $LATEST"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Claude CLI version changed: $KNOWN -> $LATEST"
+
+            # Try to fetch changelog from npm for context
+            CHANGELOG=$(npm view @anthropic-ai/claude-code --json 2>/dev/null | jq -r '.description // "No description available"')
+            echo "description=$CHANGELOG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check SwiftTerm for new releases
+        id: swiftterm
+        run: |
+          PINNED=$(jq -r '.swiftterm.pinned_commit' .github/upstream-dependencies.json)
+          LATEST_TAG=$(gh api repos/migueldeicaza/SwiftTerm/releases/latest --jq '.tag_name' 2>/dev/null || echo "unknown")
+          LATEST_SHA=$(gh api repos/migueldeicaza/SwiftTerm/commits/main --jq '.sha' 2>/dev/null || echo "unknown")
+
+          echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "latest_sha=${LATEST_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+          if [ "${LATEST_SHA:0:12}" = "${PINNED:0:12}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build dependency review
+        id: review
+        run: |
+          # Load our dependency table
+          MODES=$(jq -r '.["claude-cli"].permission_modes | join(", ")' .github/upstream-dependencies.json)
+          FLAGS=$(jq -r '.["claude-cli"].cli_flags_we_use | join(", ")' .github/upstream-dependencies.json)
+
+          cat > /tmp/review.md << REVIEW_EOF
+          ## Upstream Drift Check — $(date +%Y-%m-%d)
+
+          ### Claude CLI
+          - **Known version**: ${{ steps.check.outputs.known || 'not tracked' }}
+          - **Latest version**: ${{ steps.check.outputs.latest }}
+          - **Status**: ${{ steps.check.outputs.changed == 'true' && '⚠️ NEW VERSION' || '✅ No change' }}
+
+          ### SwiftTerm
+          - **Pinned commit**: \`${{ steps.swiftterm.outputs.pinned }}\`
+          - **Latest tag**: ${{ steps.swiftterm.outputs.latest_tag }}
+          - **Latest main**: \`${{ steps.swiftterm.outputs.latest_sha }}\`
+          - **Status**: ${{ steps.swiftterm.outputs.changed == 'true' && '⚠️ NEW COMMITS' || '✅ No change' }}
+
+          ### What We Depend On (review against changelog)
+
+          **Permission modes we hardcode**: ${MODES}
+          **CLI flags we pass**: ${FLAGS}
+          **Terminal behavior**: Kitty keyboard protocol is stripped (SwiftTermView.swift)
+
+          ### Action Items
+          - [ ] Check Claude CLI changelog for breaking changes to permission modes or flags
+          - [ ] Verify our \`SessionConfiguration.PermissionMode\` enum matches current CLI
+          - [ ] Check if SwiftTerm updates include fixes we need (or break our kitty workaround)
+          - [ ] If changes found, update \`.github/upstream-dependencies.json\` with new version
+          REVIEW_EOF
+
+          cat /tmp/review.md
+
+      - name: Open issue if anything changed
+        if: steps.check.outputs.changed == 'true' || steps.swiftterm.outputs.changed == 'true'
+        run: |
+          # Check for existing open drift issue to avoid duplicates
+          EXISTING=$(gh issue list --label "upstream-drift" --state open --json number --jq 'length')
+          if [ "$EXISTING" -gt "0" ]; then
+            echo "Drift issue already open, skipping"
+            exit 0
+          fi
+
+          gh issue create \
+            --title "Upstream drift: review Claude CLI ${{ steps.check.outputs.latest }} / SwiftTerm changes" \
+            --body "$(cat /tmp/review.md)" \
+            --label "upstream-drift" \
+            --assignee "thaddaeus"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update known version if changed
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          jq --arg v "${{ steps.check.outputs.latest }}" '.["claude-cli"].last_known_version = $v' \
+            .github/upstream-dependencies.json > /tmp/deps.json
+          mv /tmp/deps.json .github/upstream-dependencies.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/upstream-dependencies.json
+          git commit -m "Update known Claude CLI version to ${{ steps.check.outputs.latest }}"
+          git push

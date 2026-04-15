@@ -53,8 +53,9 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     enum PermissionMode: String, Codable, CaseIterable, Identifiable {
         case `default` = "default"
         case plan = "plan"
-        case autoEdit = "auto-edit"
-        case fullAuto = "full-auto"
+        case acceptEdits = "acceptEdits"
+        case auto = "auto"
+        case dontAsk = "dontAsk"
         case bypassPermissions = "bypassPermissions"
 
         var id: String { rawValue }
@@ -63,9 +64,27 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
             switch self {
             case .default: return "Default"
             case .plan: return "Plan"
-            case .autoEdit: return "Auto Edit"
-            case .fullAuto: return "Full Auto"
+            case .acceptEdits: return "Accept Edits"
+            case .auto: return "Auto"
+            case .dontAsk: return "Don't Ask"
             case .bypassPermissions: return "Bypass Permissions"
+            }
+        }
+
+        /// Decode legacy values from saved sessions
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            switch raw {
+            case "auto-edit": self = .acceptEdits
+            case "full-auto": self = .auto
+            default:
+                guard let mode = PermissionMode(rawValue: raw) else {
+                    throw DecodingError.dataCorruptedError(
+                        in: try decoder.singleValueContainer(),
+                        debugDescription: "Unknown permission mode: \(raw)"
+                    )
+                }
+                self = mode
             }
         }
     }

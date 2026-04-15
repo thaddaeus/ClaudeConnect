@@ -179,7 +179,7 @@ struct ClaudeProcessBuilder {
       --name NAME              Tab name
       --cwd PATH               Working directory
       --model MODEL            Claude model (opus, sonnet, haiku)
-      --permission-mode MODE   Permission mode (default, plan, auto-edit, full-auto, bypassPermissions)
+      --permission-mode MODE   Permission mode (default, plan, acceptEdits, auto, dontAsk, bypassPermissions)
       --effort LEVEL           Effort level (low, medium, high, max)
       --system-prompt TEXT     Replace system prompt
       --append-system-prompt TEXT  Append to system prompt
@@ -190,8 +190,18 @@ struct ClaudeProcessBuilder {
       --continue               Continue previous session
       --close-self             Close this tab (when your work is done)
       --close --name NAME      Close another tab by name
+      --wait-for-close ID      Block until the tab closes, then print event JSON
+      --timeout SECONDS        Max wait time (use with --wait-for-close)
+
+    Opening a tab prints its ID: "tab-id: <UUID>". Use this ID with --wait-for-close \
+    to monitor when the tab closes. The event JSON includes the close reason \
+    ("self-close", "manual", or "process-exit") and exit code.
 
     Example: consoleforge-tab --name "Feature Work" --cwd /path/to/worktree --prompt "Implement the feature"
+
+    Example (spawn and wait):
+      TAB_ID=$(consoleforge-tab --name "Build" --prompt "Run tests" | grep tab-id | cut -d' ' -f2)
+      consoleforge-tab --wait-for-close "$TAB_ID"
     """
 
     /// Shell-quote a string to safely embed in a command

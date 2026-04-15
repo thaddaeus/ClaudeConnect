@@ -1,0 +1,43 @@
+{
+  "_comment": "Tracks upstream interfaces ConsoleForge depends on. The GHA drift-check workflow compares new Claude CLI releases against this file and opens an issue if review is needed.",
+  "claude-cli": {
+    "last_known_version": "2.1.109",
+    "npm_package": "@anthropic-ai/claude-code",
+    "permission_modes": [
+      "default",
+      "plan",
+      "acceptEdits",
+      "auto",
+      "dontAsk",
+      "bypassPermissions"
+    ],
+    "cli_flags_we_use": [
+      "--permission-mode",
+      "--model",
+      "--system-prompt",
+      "--append-system-prompt",
+      "--allowedTools",
+      "--disallowedTools",
+      "--mcp-config",
+      "--continue",
+      "--effort"
+    ],
+    "env_vars_we_set": [
+      "TERM=xterm-256color",
+      "CONSOLEFORGE_TAB_ID",
+      "CONSOLEFORGE_SESSION_NAME"
+    ],
+    "terminal_protocols": {
+      "kitty_keyboard": "disabled — stripped in SwiftTermView.swift to prevent arrow key issues"
+    }
+  },
+  "swiftterm": {
+    "pinned_commit": "0f2af750fbc4b1c508b82fe863b907d19cca9ff9",
+    "pin_reason": "Fixes kitty keyboard protocol sequences being misinterpreted as cursor restore (PR #500)"
+  },
+  "macos": {
+    "minimum_version": "14.0",
+    "signing": "Developer ID Application + hardened runtime + notarization",
+    "entitlements": "ConsoleForge.entitlements"
+  }
+}

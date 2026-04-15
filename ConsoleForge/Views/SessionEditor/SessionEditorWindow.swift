@@ -27,6 +27,7 @@ struct SessionEditorWindow: View {
                         dismissWindow(id: "session-editor")
                     }
                 )
+                .id(sessionID)
             } else {
                 Text("No session selected")
                     .foregroundStyle(.secondary)
