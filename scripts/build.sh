@@ -46,8 +46,10 @@ COMMIT_SHORT="$(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
 # --target), so unpushed local commits shipped in the DMG while every tag
 # pointed at a stale commit. Fail fast instead of repeating that drift.
 if [ "$DO_RELEASE" = true ]; then
-    if [ -n "$(git -C "$PROJECT_DIR" status --porcelain)" ]; then
-        echo "ERROR: Working tree has uncommitted changes. Commit or stash before releasing,"
+    # Only tracked modifications affect what compiles into the DMG; ignore
+    # untracked scratch files (e.g. icon-concepts/) so they don't block a release.
+    if [ -n "$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=no)" ]; then
+        echo "ERROR: Tracked files have uncommitted changes. Commit or stash before releasing,"
         echo "       otherwise the published tag won't match what's in the DMG."
         exit 1
     fi
