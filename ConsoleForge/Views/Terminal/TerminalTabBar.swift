@@ -41,7 +41,7 @@ struct TerminalTabBar: View {
         let isHovered = hoveredTabID == session.id
         return HStack(spacing: 6) {
             Circle()
-                .fill(isActive ? session.tabColor : activity.indicatorColor)
+                .fill(activity.attentionColor ?? session.tabColor)
                 .frame(width: 8, height: 8)
 
             Image(systemName: session.tabIconName)

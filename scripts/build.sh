@@ -38,8 +38,29 @@ done
 
 BUILD_NUMBER="$(date +%Y%m%d%H%M)"
 DMG_PATH="$BUILD_DIR/$APP_NAME-v$VERSION.dmg"
+COMMIT_SHA="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+COMMIT_SHORT="$(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
 
-echo "=== Building $APP_NAME v$VERSION (build $BUILD_NUMBER) ==="
+# ── Preflight: a release must describe code that actually exists on origin ──
+# Historically the tag was created against the remote default-branch HEAD (no
+# --target), so unpushed local commits shipped in the DMG while every tag
+# pointed at a stale commit. Fail fast instead of repeating that drift.
+if [ "$DO_RELEASE" = true ]; then
+    if [ -n "$(git -C "$PROJECT_DIR" status --porcelain)" ]; then
+        echo "ERROR: Working tree has uncommitted changes. Commit or stash before releasing,"
+        echo "       otherwise the published tag won't match what's in the DMG."
+        exit 1
+    fi
+    git -C "$PROJECT_DIR" fetch origin --quiet
+    if ! git -C "$PROJECT_DIR" merge-base --is-ancestor "$COMMIT_SHA" origin/main; then
+        echo "ERROR: HEAD ($COMMIT_SHORT) is not on origin/main."
+        echo "       Push before releasing so the tag points to a real remote commit:"
+        echo "         git push origin main"
+        exit 1
+    fi
+fi
+
+echo "=== Building $APP_NAME v$VERSION (build $BUILD_NUMBER, commit $COMMIT_SHORT) ==="
 echo ""
 
 # ── Step 1: Build release binary ──
@@ -156,6 +177,10 @@ hdiutil create -volname "$APP_NAME v$VERSION" \
     -ov -format UDZO \
     "$DMG_PATH" >/dev/null 2>&1
 
+# Unregister the staged app from Launch Services so the about-to-be-deleted path doesn't
+# shadow /Applications/ConsoleForge.app and make the app invisible to Shortcuts.app et al.
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+"$LSREGISTER" -u "$DMG_TEMP/$APP_NAME.app" 2>/dev/null || true
 rm -rf "$DMG_TEMP"
 
 codesign --force --sign "$SIGN_IDENTITY" "$DMG_PATH"
@@ -185,8 +210,12 @@ if [ "$DO_RELEASE" = true ]; then
     if [ -z "$RELEASE_NOTES" ]; then
         RELEASE_NOTES="ConsoleForge v$VERSION"
     fi
+    RELEASE_NOTES="$RELEASE_NOTES"$'\n\n'"Built from commit $COMMIT_SHORT"
 
+    # --target pins the tag to the exact commit that was built, instead of
+    # whatever the remote default branch happens to point at.
     gh release create "v$VERSION" "$DMG_PATH" \
+        --target "$COMMIT_SHA" \
         --title "$APP_NAME v$VERSION" \
         --notes "$RELEASE_NOTES"
 

@@ -76,4 +76,14 @@ enum TabActivity {
         case .bell: .yellow
         }
     }
+
+    /// Color that should override a tab's identity color to grab the user's attention.
+    /// Returns nil for non-urgent states so the tab's own color can show through.
+    /// Used by single-dot UIs (tab bar) where activity and identity share one indicator.
+    var attentionColor: Color? {
+        switch self {
+        case .bell: .yellow
+        case .idle, .active, .output: nil
+        }
+    }
 }

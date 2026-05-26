@@ -10,6 +10,10 @@ struct SwiftTermView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalView {
         let terminalView = TerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        // Recover from view/buffer desync after the view stops drawing for a while
+        // (display sleep, window occluded). On wake/un-occlusion, mark all rows dirty
+        // and force a redraw so the rendered surface re-syncs to the SwiftTerm model.
+        context.coordinator.installRepaintObservers(for: terminalView)
 
         // Configure appearance - match Terminal.app default (Menlo 11pt)
         let fontSize: CGFloat = 11
@@ -81,6 +85,16 @@ struct SwiftTermView: NSViewRepresentable {
         // and hit a macOS CoreAnimation bug (COREANIMATION Code 6) on long-running sessions.
         nsView.isHidden = !isActive
 
+        // While hidden, the SwiftTerm buffer keeps receiving PTY data but AppKit
+        // doesn't draw the view — incremental dirty-row tracking gets consumed by
+        // no-op draws, so on un-hide only rows dirtied after un-hide get repainted,
+        // leaving stale content (Claude's TUI status line is the worst offender).
+        // Force a full repaint from the buffer model on hidden→visible transitions.
+        if isActive && !context.coordinator.wasActive {
+            Self.forceFullRepaint(nsView)
+        }
+        context.coordinator.wasActive = isActive
+
         // When this terminal becomes the active tab, give it focus
         if isActive {
             DispatchQueue.main.async {
@@ -92,6 +106,17 @@ struct SwiftTermView: NSViewRepresentable {
         // setWindowSize here — updateNSView fires on every SwiftUI state change
         // (activity tracker updates on each PTY data chunk), which would spam
         // ioctl(TIOCSWINSZ) and trigger hundreds of SIGWINCH per second.
+    }
+
+    static func dismantleNSView(_ nsView: TerminalView, coordinator: Coordinator) {
+        coordinator.removeRepaintObservers()
+    }
+
+    static func forceFullRepaint(_ terminalView: TerminalView) {
+        let terminal = terminalView.getTerminal()
+        let lastRow = max(0, terminal.rows - 1)
+        terminal.refresh(startRow: 0, endRow: lastRow)
+        terminalView.needsDisplay = true
     }
 
     /// Strips kitty keyboard protocol push (CSI > N u) and set (CSI = N u)
@@ -136,9 +161,49 @@ struct SwiftTermView: NSViewRepresentable {
         let onTerminated: ((Int32?) -> Void)?
         var onBell: (() -> Void)?
         var process: PtyProcess?
+        var wasActive: Bool = false
+        private weak var observedTerminalView: TerminalView?
+        private var wakeObserver: NSObjectProtocol?
+        private var occlusionObserver: NSObjectProtocol?
 
         init(onTerminated: ((Int32?) -> Void)?) {
             self.onTerminated = onTerminated
+        }
+
+        func installRepaintObservers(for terminalView: TerminalView) {
+            observedTerminalView = terminalView
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let view = self?.observedTerminalView, !view.isHidden else { return }
+                SwiftTermView.forceFullRepaint(view)
+            }
+            occlusionObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let view = self?.observedTerminalView,
+                      !view.isHidden,
+                      let window = notification.object as? NSWindow,
+                      window === view.window,
+                      window.occlusionState.contains(.visible) else { return }
+                SwiftTermView.forceFullRepaint(view)
+            }
+        }
+
+        func removeRepaintObservers() {
+            if let obs = wakeObserver {
+                NSWorkspace.shared.notificationCenter.removeObserver(obs)
+            }
+            if let obs = occlusionObserver {
+                NotificationCenter.default.removeObserver(obs)
+            }
+            wakeObserver = nil
+            occlusionObserver = nil
+            observedTerminalView = nil
         }
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
