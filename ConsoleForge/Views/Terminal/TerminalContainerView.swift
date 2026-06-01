@@ -55,7 +55,7 @@ struct TerminalContainerView: View {
                 isActive: store.activeTabID == sessionID,
                 onProcessTerminated: { exitCode in
                     tabStates[sessionID] = .terminated(exitCode)
-                    activityTracker.didTerminate(tabID: sessionID)
+                    activityTracker.didTerminate(tabID: sessionID, exitCode: exitCode)
                     // Only emit process-exit if the tab is still open (not already
                     // closed by user or self-close, which would have emitted their own event)
                     if store.openTabIDs.contains(sessionID) {

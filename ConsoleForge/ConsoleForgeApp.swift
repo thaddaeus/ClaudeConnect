@@ -49,7 +49,17 @@ struct ConsoleForgeApp: App {
     @State private var activityTracker = TabActivityTracker()
     @State private var commandWatcher = CommandWatcher()
     @State private var updateChecker = UpdateChecker()
+    @State private var companionSettings: CompanionSettings
+    @State private var companionService: CompanionService
     @State private var showFDAPrompt = false
+
+    init() {
+        // CompanionService must share the same CompanionSettings instance the UI
+        // binds to, so settings changes are seen by the event poster.
+        let settings = CompanionSettings()
+        _companionSettings = State(initialValue: settings)
+        _companionService = State(initialValue: CompanionService(settings: settings))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -57,6 +67,8 @@ struct ConsoleForgeApp: App {
                 .environment(store)
                 .environment(activityTracker)
                 .environment(updateChecker)
+                .environment(companionSettings)
+                .environment(companionService)
                 .task {
                     commandWatcher.onCommand = { command in
                         handleCommand(command)
@@ -64,6 +76,20 @@ struct ConsoleForgeApp: App {
                     commandWatcher.start()
                     updateChecker.checkForUpdates()
                     TabEventWriter.cleanupStaleEvents()
+
+                    // Forward tab activity transitions to the companion poster,
+                    // enriching each signal with the tab's metadata from the store.
+                    // emit() always fires on the main thread, so assuming main-actor
+                    // isolation here is safe and lets us call the @MainActor service.
+                    activityTracker.settleSeconds = companionSettings.settleSeconds
+                    activityTracker.onCompanionEvent = { signal in
+                        MainActor.assumeIsolated {
+                            companionService.report(
+                                signal,
+                                config: store.session(for: signal.tabId)
+                            )
+                        }
+                    }
 
                     // Prompt for Full Disk Access on first launch, or if not yet granted
                     if !hasFullDiskAccess() {
@@ -78,6 +104,9 @@ struct ConsoleForgeApp: App {
                         UserDefaults.standard.set(true, forKey: "fdaPromptDismissed")
                         showFDAPrompt = false
                     }
+                }
+                .onChange(of: companionSettings.settleSeconds) { _, newValue in
+                    activityTracker.settleSeconds = newValue
                 }
         }
         .windowStyle(.titleBar)
@@ -134,6 +163,8 @@ struct ConsoleForgeApp: App {
 
         Settings {
             SettingsView()
+                .environment(companionSettings)
+                .environment(companionService)
         }
 
         Window("Edit Session", id: "session-editor") {
