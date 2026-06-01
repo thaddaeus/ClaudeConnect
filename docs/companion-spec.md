@@ -17,16 +17,24 @@ follows it.
 - Get a push notification when a tab needs you — Claude finished a turn / hit a
   prompt (bell), or a background tab streamed output and then went quiet ("settled").
 - Work **anywhere** (cellular, off your WiFi) and fire **even when the PWA is closed**.
-- Pair a phone to a Mac with a short code — the **companion bridge stays accountless**.
-- **GitHub login** for user identity, so a user can file bug reports / help requests
-  from the app and we can track and follow up on them.
+- **GitHub login is required** to use the companion. One identity ties together the
+  Mac(s), the phone(s), and support requests.
+- Signing in on the Mac **mints a long-lived device token**; the phone signs in with
+  the same account and automatically sees that account's Macs.
 
-> Three concerns are deliberately decoupled — do not entangle them:
-> 1. **Bridge transport auth** → long-lived device tokens (machine-to-service).
-> 2. **User identity** → GitHub login (only required for support / multi-device).
-> 3. **Support backend** → pluggable intake; first adapter is GitHub Issues.
-> Login is *not* required to use the companion bridge; the background event poster
-> must never depend on a refreshable user OAuth token.
+> **Unified-login model** (revised 2026-06-01, supersedes the original accountless
+> design). One GitHub login is the single source of identity, but the three concerns
+> still use distinct *tokens* so the background poster never depends on a refreshable
+> OAuth token:
+> 1. **User identity** → GitHub login (required, up front).
+> 2. **Bridge transport auth** → a long-lived **device token** that login *mints*
+>    server-side. The Mac→relay poster uses this token, never the OAuth/session token,
+>    so it survives OAuth expiry while you're away.
+> 3. **Support backend** → pluggable intake, authed by the **session token** from the
+>    same login; first adapter is GitHub Issues.
+> Rationale: requiring login gives one mental model and ties support + multi-device to
+> a real identity, while login-bootstrapped device tokens keep the unattended poster
+> stable (the hard constraint from the original design is preserved).
 
 **Non-goals (v1)**
 - Two-way control (typing into a tab from the phone). Read/alert only.
@@ -267,42 +275,52 @@ Returns `{ "issueNumber": 142, "url": "https://github.com/.../issues/142" }`.
 
 ---
 
-## 6. Pairing & auth (no accounts)
+## 6. Auth & device enrollment (login-required)
 
-1. On enabling the companion, the Mac generates `deviceId` (UUID) + `deviceToken`
-   (random, Keychain). First `POST /v1/events` registers the device on the relay
-   under that token (trust-on-first-use per `deviceId`).
-2. "Pair a phone" → Mac calls `POST /v1/pair` `{deviceId}` and gets a short code
-   (6 chars, base32, ~5 min TTL) which the relay maps `code → deviceId`. (Mac may
-   instead generate the code and register it; relay enforces TTL + single use.)
-3. Phone opens the PWA, enters the code (or scans the QR). PWA requests notification
-   permission, gets a `PushSubscription`, and calls `/v1/subscribe`. Relay binds the
-   subscription to the device and returns a `readToken`.
-4. Done. Multiple phones can pair to one Mac (each gets its own subscription + token).
+All flows hang off one GitHub login (see §7). No pairing codes.
 
-**Trust model:** anyone holding a live pairing code can subscribe, so codes are
-short-lived and single-use. `deviceToken` (write) and `readToken` (read) are
-independent — a phone can never post fake events.
+1. **Mac sign-in** → `ASWebAuthenticationSession` runs the GitHub OAuth flow (§7).
+   On success the Worker mints, for this `github_id` + `deviceId`:
+   - a **device token** (long-lived, random) → stored in the Mac Keychain; the
+     `POST /v1/events` poster authenticates with it. Bound to the user.
+   - a **session token** (for `/v1/support*`) → also Keychain.
+2. **Phone sign-in** → the PWA runs the same GitHub OAuth flow and receives a
+   **read token** scoped to that user. It then requests notification permission, gets
+   a `PushSubscription`, and calls `/v1/subscribe` (authed by the read token). The
+   subscription is stored under the **user**, so it receives pushes from any of that
+   user's Macs.
+3. Multiple Macs and multiple phones per account: events fan in by `github_id`,
+   pushes fan out to all the user's subscriptions.
+
+**Token model:** `deviceToken` (Mac, write), `readToken` (phone, read), and the
+support `sessionToken` are independent and all derived from one identity. A phone
+holds only a read token, so it can never post fake events. Losing the OAuth token
+never stops the poster — it runs on the long-lived device token.
 
 ---
 
-## 7. User identity (GitHub login)
+## 7. User identity (GitHub login) — required, up front
 
-For **support and future multi-device only** — never for bridge transport auth.
-Login is lazy: prompted when the user opens Support (or opts into multi-device),
-not required to run the companion.
+Login is the **entry point** to the companion (not lazy). Until the user signs in,
+the Mac has no device token and the phone has no read token, so nothing flows.
 
-- **Flow:** standard GitHub OAuth, Authorization Code + PKCE. macOS app uses
-  `ASWebAuthenticationSession`; PWA uses a redirect. The **Worker holds the GitHub
-  OAuth client secret** and performs the `code → access_token` exchange — the secret
-  never ships in the app or PWA.
-- **Scopes:** minimal — `read:user` (+ `user:email` if we want contact email). We do
-  **not** request `repo`: issues are authored by our GitHub App/bot, not the user's
-  token (see §8).
-- **Result:** Worker derives a stable identity (`github_id` + `login` + `avatar`) and
-  issues its own **app session token** (short-ish-lived JWT or opaque + refresh),
-  stored in **Keychain** on macOS / IndexedDB on the PWA. This session token
-  authenticates `/v1/support*` calls. Distinct from the bridge's `deviceToken`.
+- **Flow:** GitHub OAuth, Authorization Code with a **confidential client** — the
+  **Worker holds the client secret** and performs the `code → access_token` exchange;
+  the secret never ships in the app or PWA. A signed `state` value guards CSRF.
+  - **macOS:** `ASWebAuthenticationSession` opens `GET /v1/auth/start?platform=mac`
+    (callbackURLScheme `consoleforge`). The Worker redirects to GitHub; GitHub calls
+    back to `GET /v1/auth/callback`; the Worker exchanges the code, upserts the user,
+    mints a **device token** + **session token**, and 302s to
+    `consoleforge://auth/callback#device=…&session=…`. `ASWebAuthenticationSession`
+    captures that and the app stores both in Keychain.
+  - **PWA:** navigates to `GET /v1/auth/start?platform=web`; after the GitHub callback
+    the Worker redirects back to `/` with a **read token** (in the URL fragment); the
+    PWA stores it and proceeds to push subscription.
+- **Scopes:** minimal — `read:user` (+ `user:email` for contact). We do **not** request
+  `repo`: issues are authored by our GitHub App/bot, not the user's token (see §8).
+- **Identity:** Worker keys everything on a stable `github_id` (+ `login`, `avatar`).
+  Device tokens, read tokens (subscriptions), and the support session token are all
+  bound to it but remain independent secrets.
 
 ## 8. Support intake (Report a Bug / Help)
 
@@ -407,13 +425,19 @@ Scaffolded via the `new-project` flow when we start Phase 2/3.
    (VAPID). Validate end-to-end push to a real iPhone home-screen PWA.
 3. **PWA** (new repo): pairing + status board + service worker, to the iPhone layout
    guide. Polish notification copy per state.
-4. **GitHub login** (both repos): OAuth + session tokens in the Worker; sign-in UI in
-   the macOS app (`ASWebAuthenticationSession`) and PWA.
+4. **GitHub login** (both repos) — now the **auth backbone**, not an add-on. Worker:
+   `/v1/auth/start` + `/v1/auth/callback`, confidential `code→token` exchange, user
+   store, mint device/session/read tokens. macOS: `AuthService`
+   (`ASWebAuthenticationSession` + `consoleforge://` callback), gate the Companion UI
+   on sign-in, store device + session tokens. PWA: sign-in screen → read token.
+   **Retrofits Phases 1–3:** the Mac's client-generated device token and the phone's
+   pairing-code flow are replaced by login-minted tokens.
 5. **Support intake** (both repos): `SupportReporter` + Help menu in the app;
    `/v1/support*` in the Worker with the GitHub Issues adapter into the private repo;
-   "your requests" status view.
+   "your requests" status view (authed by the session token from Phase 4).
 
-Phases 1–3 ship the companion. 4–5 add identity + support and can land independently.
+Phases 1–3 (built first under the original accountless design) now get retrofitted by
+Phase 4's login-required model; Phase 5 builds on Phase 4's identity.
 
 ---
 
