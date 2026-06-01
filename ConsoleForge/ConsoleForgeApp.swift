@@ -4,14 +4,34 @@ import AppKit
 /// Ensures the app runs as a proper GUI application with dock icon and keyboard focus,
 /// even when launched via `swift run` (which starts as a CLI process).
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Held for the app's lifetime to opt out of App Nap. Without it, macOS
+    /// throttles the CoreAnimation redraw cycle for windows it deems idle —
+    /// PTY output keeps marking the terminal view dirty via setNeedsDisplay,
+    /// but the automatic display flush is suspended, so live output/typing is
+    /// invisible until a mouse click forces a synchronous displayIfNeeded.
+    /// A terminal multiplexer hosting live subprocesses is doing genuine
+    /// user-initiated work and must not be napped while running.
+    private var activityToken: NSObjectProtocol?
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        activityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Hosting live terminal sessions")
+
         // Delay activation to ensure windows are ready (swift run needs this)
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let token = activityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            activityToken = nil
         }
     }
 

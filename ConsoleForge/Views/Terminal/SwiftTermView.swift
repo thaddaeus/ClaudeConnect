@@ -90,8 +90,19 @@ struct SwiftTermView: NSViewRepresentable {
         // no-op draws, so on un-hide only rows dirtied after un-hide get repainted,
         // leaving stale content (Claude's TUI status line is the worst offender).
         // Force a full repaint from the buffer model on hidden→visible transitions.
+        //
+        // Crucially, defer the repaint to the NEXT runloop tick. Setting isHidden
+        // = false above doesn't take effect until AppKit commits this update pass,
+        // so a synchronous forceFullRepaint here lands on a still-suspended,
+        // layer-backed view and is a no-op — leaving incremental setNeedsDisplay
+        // updates (live typing/output) un-composited until a real event (e.g. a
+        // mouse click) wakes compositing. Dispatching async runs the repaint after
+        // the un-hide is committed, reproducing the click's effect programmatically.
         if isActive && !context.coordinator.wasActive {
-            Self.forceFullRepaint(nsView)
+            DispatchQueue.main.async { [weak nsView] in
+                guard let nsView, !nsView.isHidden else { return }
+                Self.forceFullRepaint(nsView)
+            }
         }
         context.coordinator.wasActive = isActive
 
