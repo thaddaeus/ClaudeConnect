@@ -1,27 +1,19 @@
 import Foundation
 import Observation
 
-/// Errors surfaced to the Settings UI (e.g. when pairing).
+/// Errors surfaced to the Settings UI (sign-in / relay failures).
 enum CompanionError: LocalizedError {
     case noRelayURL
-    case tokenUnavailable
     case relayStatus(Int)
     case badResponse
 
     var errorDescription: String? {
         switch self {
-        case .noRelayURL: "Set a relay URL first."
-        case .tokenUnavailable: "Could not access the device token in the Keychain."
+        case .noRelayURL: "No relay URL configured."
         case .relayStatus(let code): "Relay returned HTTP \(code)."
         case .badResponse: "Unexpected response from the relay."
         }
     }
-}
-
-/// Result of a pairing request (spec §6).
-struct PairingCode {
-    let code: String
-    let expiresAt: Date?
 }
 
 /// Builds companion events from tracker signals + tab metadata, holds the device
@@ -41,7 +33,6 @@ final class CompanionService {
     @ObservationIgnored private var isFlushing = false
     @ObservationIgnored private var nextSeq: UInt64 = 0
     @ObservationIgnored private let maxQueue = 50
-    @ObservationIgnored private let tokenAccount = "companion.deviceToken"
     @ObservationIgnored private let iso = ISO8601DateFormatter()
 
     private struct QueuedEvent {
@@ -107,7 +98,7 @@ final class CompanionService {
         guard settings.companionEnabled, !isFlushing, !queue.isEmpty else { return }
         guard let base = normalizedBaseURL() else { return }
         guard let url = URL(string: base + "/v1/events") else { return }
-        guard let token = ensureDeviceToken() else { return }
+        guard let token = deviceToken() else { return } // not signed in yet
 
         isFlushing = true
         defer { isFlushing = false }
@@ -141,59 +132,20 @@ final class CompanionService {
         }
     }
 
-    /// Request a short-lived pairing code from the relay (spec §6).
-    func pair() async throws -> PairingCode {
-        guard let base = normalizedBaseURL(), let url = URL(string: base + "/v1/pair") else {
-            throw CompanionError.noRelayURL
-        }
-        guard let token = ensureDeviceToken() else { throw CompanionError.tokenUnavailable }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONEncoder().encode(["deviceId": settings.deviceId])
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw CompanionError.badResponse }
-        guard (200..<300).contains(http.statusCode) else { throw CompanionError.relayStatus(http.statusCode) }
-
-        let decoded = try JSONDecoder().decode(PairResponse.self, from: data)
-        let expires = decoded.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
-        return PairingCode(code: decoded.code, expiresAt: expires)
-    }
-
-    private struct PairResponse: Decodable {
-        let code: String
-        let expiresAt: String?
-    }
-
     // MARK: - Token & URL helpers
 
-    /// Reads the device token from the Keychain, generating + persisting one on
-    /// first use. The token is the bearer secret on `/v1/events` and `/v1/pair`.
-    private func ensureDeviceToken() -> String? {
-        if let existing = KeychainStore.read(account: tokenAccount) { return existing }
-        guard let token = Self.randomToken() else { return nil }
-        return KeychainStore.write(token, account: tokenAccount) ? token : nil
+    /// The login-minted device token from the Keychain (written by CompanionAuth on
+    /// sign-in). Nil until the user signs in, which is when the poster goes live.
+    private func deviceToken() -> String? {
+        KeychainStore.read(account: CompanionKeychain.deviceToken)
     }
 
-    /// Drops the device token (called when the user disables the companion), so a
-    /// re-enable starts a fresh trust-on-first-use registration.
-    func resetDeviceToken() {
-        KeychainStore.delete(account: tokenAccount)
+    /// Clears the offline queue + connection status (e.g. on sign-out / disable).
+    func reset() {
         queue.removeAll()
         queuedCount = 0
         lastError = nil
         lastSuccessfulPost = nil
-    }
-
-    private static func randomToken() -> String? {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            return nil
-        }
-        return Data(bytes).base64EncodedString()
     }
 
     /// Trims a trailing slash and rejects an empty URL.

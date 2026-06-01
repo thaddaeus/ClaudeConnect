@@ -121,6 +121,17 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
         <key>OBJC_DISABLE_INITIALIZE_FORK_SAFETY</key>
         <string>YES</string>
     </dict>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.thaddaeus.ConsoleForge.auth</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>consoleforge</string>
+            </array>
+        </dict>
+    </array>
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>

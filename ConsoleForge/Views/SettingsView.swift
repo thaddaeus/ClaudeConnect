@@ -1,6 +1,6 @@
 import SwiftUI
 import AppKit
-import CoreImage
+import AuthenticationServices
 
 struct SettingsView: View {
     var body: some View {
@@ -86,57 +86,74 @@ struct GeneralSettingsView: View {
 struct CompanionSettingsView: View {
     @Environment(CompanionSettings.self) private var settings
     @Environment(CompanionService.self) private var service
+    @Environment(CompanionAuth.self) private var auth
 
-    @State private var pairing: PairingCode?
-    @State private var pairError: String?
-    @State private var isPairing = false
+    @State private var isSigningIn = false
+    @State private var authError: String?
 
     var body: some View {
         @Bindable var settings = settings
 
         Form {
-            Section("Companion Bridge") {
+            Section("Account") {
+                if auth.isSignedIn {
+                    LabeledContent("Signed in") {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                            Text(auth.login.map { "@\($0)" } ?? "GitHub")
+                        }
+                    }
+                    Button("Sign out", role: .destructive) {
+                        auth.signOut()
+                        service.reset()
+                    }
+                } else {
+                    Button {
+                        Task { await signIn() }
+                    } label: {
+                        if isSigningIn {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Sign in with GitHub", systemImage: "person.crop.circle")
+                        }
+                    }
+                    .disabled(isSigningIn)
+                    Text("The companion is a cloud feature — sign in to enable phone alerts. ConsoleForge itself never requires an account.")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                    if let authError {
+                        Label(authError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            Section("Companion") {
                 Toggle("Enable phone companion", isOn: $settings.companionEnabled)
-                TextField("Relay URL", text: $settings.relayBaseURL, prompt: Text("https://…workers.dev"))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!settings.companionEnabled)
-                Text("The Mac only makes outbound calls to this URL. Nothing connects back to your Mac.")
+                    .disabled(!auth.isSignedIn)
+            }
+
+            Section("Your phone") {
+                Text("On your phone, open the companion and **sign in with the same GitHub account** — it'll show this Mac's tabs automatically.")
+                    .font(.callout)
+                Link(displayURL, destination: URL(string: settings.relayBaseURL) ?? URL(string: "https://example.com")!)
+                    .font(.caption)
+                Text("Add it to your Home Screen (Share → Add to Home Screen) so alerts work when it's closed.")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
-
-            Section("Pair a Phone") {
-                Button {
-                    Task { await requestPairingCode() }
-                } label: {
-                    if isPairing { ProgressView().controlSize(.small) }
-                    else { Text("Generate Pairing Code") }
-                }
-                .disabled(!settings.companionEnabled || settings.relayBaseURL.isEmpty || isPairing)
-
-                if let pairing {
-                    pairingCodeView(pairing)
-                }
-                if let pairError {
-                    Label(pairError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-            }
+            .disabled(!auth.isSignedIn)
 
             Section("Alerts") {
                 Toggle("Bell — turn finished / prompt", isOn: $settings.alertOnBell)
                 Toggle("Settled — background tab went quiet", isOn: $settings.alertOnSettled)
                 Toggle("Exited — process terminated", isOn: $settings.alertOnExit)
-
-                HStack {
-                    Stepper(value: $settings.settleSeconds, in: 0...30, step: 1) {
-                        Text("Settle delay: \(settleLabel)")
-                    }
+                Stepper(value: $settings.settleSeconds, in: 0...30, step: 1) {
+                    Text("Settle delay: \(settleLabel)")
                 }
                 .disabled(!settings.alertOnSettled)
                 Text("How long a background tab must be quiet before it counts as \u{201C}settled.\u{201D} 0 disables the settled alert.")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
-            .disabled(!settings.companionEnabled)
+            .disabled(!auth.isSignedIn || !settings.companionEnabled)
 
             Section("Connection") {
                 LabeledContent("Last sent", value: lastSentLabel)
@@ -153,6 +170,10 @@ struct CompanionSettingsView: View {
         settings.settleSeconds <= 0 ? "off" : "\(Int(settings.settleSeconds))s"
     }
 
+    private var displayURL: String {
+        settings.relayBaseURL.replacingOccurrences(of: "https://", with: "")
+    }
+
     private var lastSentLabel: String {
         guard let date = service.lastSuccessfulPost else { return "never" }
         let f = RelativeDateTimeFormatter()
@@ -160,65 +181,16 @@ struct CompanionSettingsView: View {
         return f.localizedString(for: date, relativeTo: Date())
     }
 
-    @ViewBuilder
-    private func pairingCodeView(_ pairing: PairingCode) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(pairing.code)
-                        .font(.system(size: 34, weight: .bold, design: .monospaced))
-                        .textSelection(.enabled)
-                    if let expiresAt = pairing.expiresAt {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let remaining = Int(expiresAt.timeIntervalSince(context.date))
-                            if remaining > 0 {
-                                Text("Expires in \(remaining)s")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                Text("Expired — generate a new code")
-                                    .font(.caption).foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                }
-                Spacer()
-                if let qr = qrImage(for: pairing.code) {
-                    Image(nsImage: qr)
-                        .interpolation(.none)
-                        .resizable()
-                        .frame(width: 96, height: 96)
-                }
-            }
-            Text("On your phone, open the companion (Add to Home Screen) and enter this code or scan the QR.")
-                .font(.caption2).foregroundStyle(.tertiary)
-        }
-    }
-
-    private func requestPairingCode() async {
-        isPairing = true
-        pairError = nil
-        defer { isPairing = false }
+    private func signIn() async {
+        isSigningIn = true
+        authError = nil
+        defer { isSigningIn = false }
         do {
-            pairing = try await service.pair()
+            try await auth.signIn()
+        } catch let err as ASWebAuthenticationSessionError where err.code == .canceledLogin {
+            // User dismissed the sheet — not an error worth surfacing.
         } catch {
-            pairing = nil
-            pairError = error.localizedDescription
+            authError = error.localizedDescription
         }
-    }
-
-    /// Encodes the relay URL + pairing code into a QR the PWA can scan to prefill.
-    private func qrImage(for code: String) -> NSImage? {
-        let base = settings.relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let payload = base.isEmpty ? code : "\(base)/?pair=\(code)"
-        guard let data = payload.data(using: .utf8),
-              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
-        guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
-        let rep = NSCIImageRep(ciImage: scaled)
-        let image = NSImage(size: rep.size)
-        image.addRepresentation(rep)
-        return image
     }
 }

@@ -12,11 +12,14 @@ final class CompanionSettings {
     var alertOnSettled: Bool { didSet { defaults.set(alertOnSettled, forKey: Keys.alertOnSettled) } }
     var alertOnExit: Bool { didSet { defaults.set(alertOnExit, forKey: Keys.alertOnExit) } }
     var settleSeconds: Double { didSet { defaults.set(settleSeconds, forKey: Keys.settleSeconds) } }
+    /// GitHub login of the signed-in user, or nil. Written by CompanionAuth.
+    var login: String? { didSet { defaults.set(login, forKey: Keys.login) } }
 
     /// Stable per-install identifier. Generated once and never changes.
     let deviceId: String
 
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored static let defaultRelayURL = "https://consoleforge-backend.tadd-687.workers.dev"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -27,13 +30,19 @@ final class CompanionSettings {
         if defaults.object(forKey: Keys.alertOnSettled) == nil { defaults.set(true, forKey: Keys.alertOnSettled) }
         if defaults.object(forKey: Keys.alertOnExit) == nil { defaults.set(true, forKey: Keys.alertOnExit) }
         if defaults.object(forKey: Keys.settleSeconds) == nil { defaults.set(3.0, forKey: Keys.settleSeconds) }
+        // Default the relay to the deployed backend (the URL is effectively fixed;
+        // kept overridable for dev).
+        if defaults.object(forKey: Keys.relayBaseURL) == nil {
+            defaults.set(Self.defaultRelayURL, forKey: Keys.relayBaseURL)
+        }
 
         companionEnabled = defaults.bool(forKey: Keys.enabled)
-        relayBaseURL = defaults.string(forKey: Keys.relayBaseURL) ?? ""
+        relayBaseURL = defaults.string(forKey: Keys.relayBaseURL) ?? Self.defaultRelayURL
         alertOnBell = defaults.bool(forKey: Keys.alertOnBell)
         alertOnSettled = defaults.bool(forKey: Keys.alertOnSettled)
         alertOnExit = defaults.bool(forKey: Keys.alertOnExit)
         settleSeconds = defaults.double(forKey: Keys.settleSeconds)
+        login = defaults.string(forKey: Keys.login)
 
         if let existing = defaults.string(forKey: Keys.deviceId) {
             deviceId = existing
@@ -52,5 +61,6 @@ final class CompanionSettings {
         static let alertOnExit = "companion.alertOnExit"
         static let settleSeconds = "companion.settleSeconds"
         static let deviceId = "companion.deviceId"
+        static let login = "companion.login"
     }
 }

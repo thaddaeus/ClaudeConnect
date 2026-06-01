@@ -51,14 +51,16 @@ struct ConsoleForgeApp: App {
     @State private var updateChecker = UpdateChecker()
     @State private var companionSettings: CompanionSettings
     @State private var companionService: CompanionService
+    @State private var companionAuth: CompanionAuth
     @State private var showFDAPrompt = false
 
     init() {
-        // CompanionService must share the same CompanionSettings instance the UI
-        // binds to, so settings changes are seen by the event poster.
+        // CompanionService + CompanionAuth must share the same CompanionSettings
+        // instance the UI binds to, so settings changes are seen everywhere.
         let settings = CompanionSettings()
         _companionSettings = State(initialValue: settings)
         _companionService = State(initialValue: CompanionService(settings: settings))
+        _companionAuth = State(initialValue: CompanionAuth(settings: settings))
     }
 
     var body: some Scene {
@@ -69,6 +71,7 @@ struct ConsoleForgeApp: App {
                 .environment(updateChecker)
                 .environment(companionSettings)
                 .environment(companionService)
+                .environment(companionAuth)
                 .task {
                     commandWatcher.onCommand = { command in
                         handleCommand(command)
@@ -165,6 +168,7 @@ struct ConsoleForgeApp: App {
             SettingsView()
                 .environment(companionSettings)
                 .environment(companionService)
+                .environment(companionAuth)
         }
 
         Window("Edit Session", id: "session-editor") {
