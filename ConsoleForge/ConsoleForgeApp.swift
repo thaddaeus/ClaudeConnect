@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// A terminal multiplexer hosting live subprocesses is doing genuine
     /// user-initiated work and must not be napped while running.
     private var activityToken: NSObjectProtocol?
+    private var screenObserver: NSObjectProtocol?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -21,6 +22,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         activityToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .idleSystemSleepDisabled],
             reason: "Hosting live terminal sessions")
+
+        // Recover from a fullscreen window stranded on a disconnected display.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refitWindowsAfterScreenChange()
+        }
 
         // Delay activation to ensure windows are ready (swift run needs this)
         DispatchQueue.main.async {
@@ -32,6 +42,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let token = activityToken {
             ProcessInfo.processInfo.endActivity(token)
             activityToken = nil
+        }
+        if let obs = screenObserver {
+            NotificationCenter.default.removeObserver(obs)
+            screenObserver = nil
+        }
+    }
+
+    /// When a display is connected/removed, a native-fullscreen window can be left
+    /// at the old display's size — clipping content on the smaller screen with no
+    /// way to resize (fullscreen windows aren't user-resizable), so only a relaunch
+    /// recovered it. Drop such a window out of fullscreen so it restores to a
+    /// correctly-sized window; constrain any plain window that ended up oversized
+    /// or off-screen. Deferred a tick because screen geometry settles after the
+    /// notification.
+    private func refitWindowsAfterScreenChange() {
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.isVisible {
+                guard let screen = window.screen ?? NSScreen.main else { continue }
+
+                if window.styleMask.contains(.fullScreen) {
+                    let f = window.frame, s = screen.frame
+                    if abs(f.width - s.width) > 1 || abs(f.height - s.height) > 1 {
+                        window.toggleFullScreen(nil)
+                    }
+                    continue
+                }
+
+                let vf = screen.visibleFrame
+                var f = window.frame
+                guard f.width > vf.width || f.height > vf.height || !vf.intersects(f) else { continue }
+                f.size.width = min(f.width, vf.width)
+                f.size.height = min(f.height, vf.height)
+                f.origin.x = max(vf.minX, min(f.origin.x, vf.maxX - f.width))
+                f.origin.y = max(vf.minY, min(f.origin.y, vf.maxY - f.height))
+                window.setFrame(f, display: true, animate: false)
+            }
         }
     }
 
