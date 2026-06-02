@@ -58,17 +58,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// notification.
     private func refitWindowsAfterScreenChange() {
         DispatchQueue.main.async {
+            let screens = NSScreen.screens
             for window in NSApp.windows where window.isVisible {
-                guard let screen = window.screen ?? NSScreen.main else { continue }
-
                 if window.styleMask.contains(.fullScreen) {
-                    let f = window.frame, s = screen.frame
-                    if abs(f.width - s.width) > 1 || abs(f.height - s.height) > 1 {
+                    // A native-fullscreen window is fine as long as it still fills
+                    // *some* connected display. It's stranded only when its frame
+                    // matches no screen — i.e. its display was disconnected, leaving
+                    // it at the old (oversized) size. Do NOT judge it against
+                    // window.screen: mid-transition (e.g. moving fullscreen to another
+                    // display) that is nil and falls back to the built-in screen, so a
+                    // legitimately-moved window looked "mismatched" and got toggled out
+                    // onto the main screen.
+                    let f = window.frame
+                    let fillsAScreen = screens.contains { s in
+                        abs(f.width - s.frame.width) < 1 && abs(f.height - s.frame.height) < 1
+                    }
+                    if !fillsAScreen {
                         window.toggleFullScreen(nil)
                     }
                     continue
                 }
 
+                guard let screen = window.screen ?? NSScreen.main else { continue }
                 let vf = screen.visibleFrame
                 var f = window.frame
                 guard f.width > vf.width || f.height > vf.height || !vf.intersects(f) else { continue }
