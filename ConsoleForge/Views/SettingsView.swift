@@ -2,13 +2,27 @@ import SwiftUI
 import AppKit
 import AuthenticationServices
 
+/// Settings tabs, persisted so the profile menu can deep-link to a specific tab
+/// (e.g. "Companion Settings…" jumps straight to the Companion pane).
+enum SettingsTab: String {
+    case general
+    case companion
+
+    /// UserDefaults key shared with anything that wants to preselect a tab.
+    static let storageKey = "settingsSelectedTab"
+}
+
 struct SettingsView: View {
+    @AppStorage(SettingsTab.storageKey) private var selectedTab: SettingsTab = .general
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             CompanionSettingsView()
                 .tabItem { Label("Companion", systemImage: "iphone.gen3") }
+                .tag(SettingsTab.companion)
         }
         .frame(width: 540, height: 560)
     }

@@ -38,6 +38,9 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .frame(minWidth: 200)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ProfileBar()
+        }
         .onTapGesture {
             // Resign terminal first responder so text fields can receive input
             NSApp.keyWindow?.makeFirstResponder(nil)
