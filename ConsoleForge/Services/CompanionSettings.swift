@@ -19,7 +19,7 @@ final class CompanionSettings {
     let deviceId: String
 
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored static let defaultRelayURL = "https://consoleforge-backend.tadd-687.workers.dev"
+    @ObservationIgnored static let defaultRelayURL = "https://app.consoleforge.us"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
