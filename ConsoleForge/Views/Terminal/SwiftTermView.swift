@@ -176,6 +176,8 @@ struct SwiftTermView: NSViewRepresentable {
         private weak var observedTerminalView: TerminalView?
         private var wakeObserver: NSObjectProtocol?
         private var occlusionObserver: NSObjectProtocol?
+        private var fullScreenEnterObserver: NSObjectProtocol?
+        private var fullScreenExitObserver: NSObjectProtocol?
 
         init(onTerminated: ((Int32?) -> Void)?) {
             self.onTerminated = onTerminated
@@ -203,6 +205,50 @@ struct SwiftTermView: NSViewRepresentable {
                       window.occlusionState.contains(.visible) else { return }
                 SwiftTermView.forceFullRepaint(view)
             }
+
+            // Entering/leaving native fullscreen resizes the window — SwiftTerm
+            // reflows its buffer to the new cols/rows, but the rendered surface
+            // can keep the old layout, stranding the cursor over stale output
+            // rows instead of the prompt. Force a full repaint once the
+            // transition has committed (next tick), plus a short safety repaint
+            // after the resize animation settles.
+            let repaintOnFullScreen: (Notification) -> Void = { [weak self] notification in
+                guard let self,
+                      let view = self.observedTerminalView,
+                      let window = notification.object as? NSWindow,
+                      window === view.window else { return }
+                self.repaintAfterTransition()
+            }
+            fullScreenEnterObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didEnterFullScreenNotification,
+                object: nil,
+                queue: .main,
+                using: repaintOnFullScreen
+            )
+            fullScreenExitObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didExitFullScreenNotification,
+                object: nil,
+                queue: .main,
+                using: repaintOnFullScreen
+            )
+        }
+
+        /// Repaint the rendered surface from the SwiftTerm buffer model after a
+        /// window-geometry transition. Runs on the next runloop tick (so the new
+        /// layout is committed) and again after the fullscreen resize animation
+        /// settles, guarding that the view is still visible each time.
+        private func repaintAfterTransition() {
+            DispatchQueue.main.async { [weak self] in
+                self?.forceRepaintIfVisible()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.forceRepaintIfVisible()
+            }
+        }
+
+        private func forceRepaintIfVisible() {
+            guard let view = observedTerminalView, !view.isHidden else { return }
+            SwiftTermView.forceFullRepaint(view)
         }
 
         func removeRepaintObservers() {
@@ -212,8 +258,16 @@ struct SwiftTermView: NSViewRepresentable {
             if let obs = occlusionObserver {
                 NotificationCenter.default.removeObserver(obs)
             }
+            if let obs = fullScreenEnterObserver {
+                NotificationCenter.default.removeObserver(obs)
+            }
+            if let obs = fullScreenExitObserver {
+                NotificationCenter.default.removeObserver(obs)
+            }
             wakeObserver = nil
             occlusionObserver = nil
+            fullScreenEnterObserver = nil
+            fullScreenExitObserver = nil
             observedTerminalView = nil
         }
 

@@ -35,9 +35,14 @@ struct ProfileBar: View {
 
     private var signedInChip: some View {
         Menu {
+            // SettingsLink does NOT fire when nested inside a Menu's content —
+            // the menu dismisses and swallows its action — and a
+            // .simultaneousGesture on a native menu item never fires either.
+            // Use a plain Button: preselect the Companion tab, then open the
+            // Settings scene via showSettingsWindow: dispatched async so the
+            // menu closes first. This is the reliable path on macOS 14+.
             Button {
-                UserDefaults.standard.set(SettingsTab.companion.rawValue, forKey: SettingsTab.storageKey)
-                openSettingsWindow()
+                openCompanionSettings()
             } label: {
                 Label("Companion Settings…", systemImage: "gearshape")
             }
@@ -78,6 +83,18 @@ struct ProfileBar: View {
         .menuIndicator(.hidden)
     }
 
+    /// Preselect the Companion tab, then open the SwiftUI `Settings` scene.
+    /// Dispatched async so the enclosing menu finishes dismissing before the
+    /// window is asked to come forward; `showSettingsWindow:` is the macOS 13+
+    /// selector for the Settings scene action.
+    private func openCompanionSettings() {
+        UserDefaults.standard.set(SettingsTab.companion.rawValue, forKey: SettingsTab.storageKey)
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        }
+    }
+
     @ViewBuilder
     private var avatar: some View {
         // GitHub serves a public avatar at /<login>.png — no token required.
@@ -89,7 +106,7 @@ struct ProfileBar: View {
                 .resizable().scaledToFit()
                 .foregroundStyle(.secondary)
         }
-        .frame(width: 24, height: 24)
+        .frame(width: 18, height: 18)
         .clipShape(Circle())
         .overlay(Circle().strokeBorder(.separator, lineWidth: 0.5))
     }
@@ -129,14 +146,6 @@ struct ProfileBar: View {
         } catch {
             // Surface detail in Settings → Companion; keep the sidebar quiet.
             NSSound.beep()
-        }
-    }
-
-    /// Open the standard Settings window. The selector is stable across the macOS
-    /// versions we target (14+); fall back to the older name just in case.
-    private func openSettingsWindow() {
-        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
     }
 }
