@@ -12,6 +12,12 @@ struct ProfileBar: View {
     @Environment(CompanionAuth.self) private var auth
     @Environment(CompanionService.self) private var service
     @Environment(CompanionSettings.self) private var settings
+    // The only API that opens the SwiftUI Settings scene on macOS 14+. The
+    // legacy `showSettingsWindow:` selector was removed in Sonoma (it logs an
+    // error and does nothing), and `SettingsLink` is swallowed inside a Menu.
+    // This action is resolved in ProfileBar's environment (the main window
+    // scene), so it fires correctly when called imperatively from the menu.
+    @Environment(\.openSettings) private var openSettings
 
     @State private var isSigningIn = false
 
@@ -35,12 +41,6 @@ struct ProfileBar: View {
 
     private var signedInChip: some View {
         Menu {
-            // SettingsLink does NOT fire when nested inside a Menu's content —
-            // the menu dismisses and swallows its action — and a
-            // .simultaneousGesture on a native menu item never fires either.
-            // Use a plain Button: preselect the Companion tab, then open the
-            // Settings scene via showSettingsWindow: dispatched async so the
-            // menu closes first. This is the reliable path on macOS 14+.
             Button {
                 openCompanionSettings()
             } label: {
@@ -83,16 +83,14 @@ struct ProfileBar: View {
         .menuIndicator(.hidden)
     }
 
-    /// Preselect the Companion tab, then open the SwiftUI `Settings` scene.
-    /// Dispatched async so the enclosing menu finishes dismissing before the
-    /// window is asked to come forward; `showSettingsWindow:` is the macOS 13+
-    /// selector for the Settings scene action.
+    /// Preselect the Companion tab, then open the SwiftUI `Settings` scene via
+    /// the `openSettings` environment action — the supported path on macOS 14+.
+    /// `SettingsView` reads the selected tab from `@AppStorage`, so setting the
+    /// default first lands the window on the Companion tab.
     private func openCompanionSettings() {
         UserDefaults.standard.set(SettingsTab.companion.rawValue, forKey: SettingsTab.storageKey)
-        DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
     }
 
     @ViewBuilder
