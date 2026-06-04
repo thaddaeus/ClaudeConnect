@@ -150,9 +150,17 @@ struct ConsoleForgeApp: App {
                         MainActor.assumeIsolated {
                             companionService.report(
                                 signal,
-                                config: store.session(for: signal.tabId)
+                                config: store.session(for: signal.tabId),
+                                openTabIds: store.openTabIDs.map(\.uuidString)
                             )
                         }
+                    }
+
+                    // Every close path funnels through store.closeTab; clean up the
+                    // tracker (which emits `.closed` to the companion) from here so
+                    // UI, menu, and CLI closes are all covered by one wire.
+                    store.onTabClosed = { tabID in
+                        activityTracker.removeTab(tabID: tabID)
                     }
 
                     // Prompt for Full Disk Access on first launch, or if not yet granted
@@ -306,9 +314,9 @@ struct ConsoleForgeApp: App {
     }
 
     private func handleCloseTab(_ command: TabCommand) {
-        // Close by tab ID (used by --close-self)
+        // Close by tab ID (used by --close-self). Tracker cleanup + companion
+        // notification happen via store.onTabClosed, so don't duplicate them here.
         if let tabIDStr = command.tabID, let tabID = UUID(uuidString: tabIDStr) {
-            activityTracker.removeTab(tabID: tabID)
             store.closeTab(sessionID: tabID, reason: .selfClose)
             return
         }
@@ -317,7 +325,6 @@ struct ConsoleForgeApp: App {
             if let session = store.sessions.first(where: {
                 $0.name == name && store.openTabIDs.contains($0.id)
             }) {
-                activityTracker.removeTab(tabID: session.id)
                 store.closeTab(sessionID: session.id, reason: .selfClose)
             }
         }

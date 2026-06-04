@@ -75,12 +75,15 @@ class TabActivityTracker {
         emit(tabID, .exited, exitCode: exitCode)
     }
 
-    /// Called when a tab is closed
+    /// Called when a tab is closed. Emits `.closed` so the companion drops the tab
+    /// from its snapshot (the tab no longer exists, unlike `.exited` where the tab
+    /// stays open showing a dead process).
     func removeTab(tabID: UUID) {
         cancelSettleTimer(for: tabID)
         activities.removeValue(forKey: tabID)
         bellTabs.remove(tabID)
         unreadTabs.remove(tabID)
+        emit(tabID, .closed)
     }
 
     // MARK: - Companion event plumbing

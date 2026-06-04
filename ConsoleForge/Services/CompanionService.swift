@@ -38,6 +38,9 @@ final class CompanionService {
     @ObservationIgnored private var nextSeq: UInt64 = 0
     @ObservationIgnored private let maxQueue = 50
     @ObservationIgnored private let iso = ISO8601DateFormatter()
+    /// Latest authoritative set of open tab ids, sent with each batch so the relay
+    /// can prune tabs that are no longer open (self-heals stale snapshots).
+    @ObservationIgnored private var openTabIds: [String] = []
 
     private struct QueuedEvent {
         let id: UInt64
@@ -52,8 +55,9 @@ final class CompanionService {
 
     /// Build an event from a tracker signal + (optional) tab metadata, decide
     /// whether it should notify, enqueue it, and kick a flush.
-    func report(_ signal: CompanionSignal, config: SessionConfiguration?) {
+    func report(_ signal: CompanionSignal, config: SessionConfiguration?, openTabIds: [String]) {
         guard settings.companionEnabled else { return }
+        self.openTabIds = openTabIds
         let event = CompanionEvent(
             tabId: signal.tabId.uuidString,
             name: config?.name ?? "Session",
@@ -73,7 +77,7 @@ final class CompanionService {
         case .bell: settings.alertOnBell
         case .settled: settings.alertOnSettled
         case .exited: settings.alertOnExit
-        case .active, .output, .idle: false
+        case .active, .output, .idle, .closed: false
         }
     }
 
@@ -108,7 +112,8 @@ final class CompanionService {
         defer { isFlushing = false }
 
         let inFlight = queue
-        let payload = CompanionEventBatch(v: 1, deviceId: settings.deviceId, events: inFlight.map(\.event))
+        let payload = CompanionEventBatch(
+            v: 1, deviceId: settings.deviceId, events: inFlight.map(\.event), openTabIds: openTabIds)
 
         do {
             var req = URLRequest(url: url)
