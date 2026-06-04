@@ -6,12 +6,16 @@ enum CompanionError: LocalizedError {
     case noRelayURL
     case relayStatus(Int)
     case badResponse
+    case notSignedIn
+    case supportUnavailable
 
     var errorDescription: String? {
         switch self {
         case .noRelayURL: "No relay URL configured."
         case .relayStatus(let code): "Relay returned HTTP \(code)."
         case .badResponse: "Unexpected response from the relay."
+        case .notSignedIn: "Sign in with GitHub first."
+        case .supportUnavailable: "Support isn’t available yet — please try again later."
         }
     }
 }

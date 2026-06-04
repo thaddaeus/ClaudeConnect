@@ -109,15 +109,18 @@ struct ConsoleForgeApp: App {
     @State private var companionSettings: CompanionSettings
     @State private var companionService: CompanionService
     @State private var companionAuth: CompanionAuth
+    @State private var supportReporter: SupportReporter
     @State private var showFDAPrompt = false
 
     init() {
-        // CompanionService + CompanionAuth must share the same CompanionSettings
-        // instance the UI binds to, so settings changes are seen everywhere.
+        // CompanionService + CompanionAuth + SupportReporter must share the same
+        // CompanionSettings instance the UI binds to, so settings (relay URL, login)
+        // changes are seen everywhere.
         let settings = CompanionSettings()
         _companionSettings = State(initialValue: settings)
         _companionService = State(initialValue: CompanionService(settings: settings))
         _companionAuth = State(initialValue: CompanionAuth(settings: settings))
+        _supportReporter = State(initialValue: SupportReporter(settings: settings))
     }
 
     var body: some Scene {
@@ -129,6 +132,7 @@ struct ConsoleForgeApp: App {
                 .environment(companionSettings)
                 .environment(companionService)
                 .environment(companionAuth)
+                .environment(supportReporter)
                 .task {
                     commandWatcher.onCommand = { command in
                         handleCommand(command)
@@ -219,6 +223,8 @@ struct ConsoleForgeApp: App {
                     .disabled(index >= store.openTabIDs.count)
                 }
             }
+
+            SupportCommands()
         }
 
         Settings {
@@ -249,6 +255,18 @@ struct ConsoleForgeApp: App {
         .windowStyle(.titleBar)
         .defaultSize(width: 540, height: 560)
         .windowResizability(.contentSize)
+
+        // Support window (Help → Report a Bug / Get Help / My Requests). A plain
+        // Window opened via `openWindow(id:)` from the Help menu — same reliable
+        // route as Companion Settings.
+        Window("Support", id: "support") {
+            SupportView()
+                .environment(companionSettings)
+                .environment(companionAuth)
+                .environment(supportReporter)
+        }
+        .windowStyle(.titleBar)
+        .defaultSize(width: 520, height: 600)
     }
 
     private func handleCommand(_ command: TabCommand) {
