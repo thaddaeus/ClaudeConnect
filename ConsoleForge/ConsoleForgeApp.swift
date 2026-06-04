@@ -235,6 +235,20 @@ struct ConsoleForgeApp: App {
         .windowStyle(.titleBar)
         .defaultSize(width: 520, height: 700)
         .windowResizability(.contentSize)
+
+        // Companion settings as a plain window — opening the macOS Settings
+        // scene from the profile Menu is unreliable (SwiftUI swallows it). This
+        // is opened via `openWindow(id:)` from ProfileBar.
+        Window("Companion Settings", id: "companion-settings") {
+            CompanionSettingsView()
+                .frame(width: 540, height: 560)
+                .environment(companionSettings)
+                .environment(companionService)
+                .environment(companionAuth)
+        }
+        .windowStyle(.titleBar)
+        .defaultSize(width: 540, height: 560)
+        .windowResizability(.contentSize)
     }
 
     private func handleCommand(_ command: TabCommand) {

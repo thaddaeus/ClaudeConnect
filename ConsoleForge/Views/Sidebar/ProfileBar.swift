@@ -12,12 +12,13 @@ struct ProfileBar: View {
     @Environment(CompanionAuth.self) private var auth
     @Environment(CompanionService.self) private var service
     @Environment(CompanionSettings.self) private var settings
-    // The only API that opens the SwiftUI Settings scene on macOS 14+. The
-    // legacy `showSettingsWindow:` selector was removed in Sonoma (it logs an
-    // error and does nothing), and `SettingsLink` is swallowed inside a Menu.
-    // This action is resolved in ProfileBar's environment (the main window
-    // scene), so it fires correctly when called imperatively from the menu.
-    @Environment(\.openSettings) private var openSettings
+    // Companion settings live in their OWN plain Window, not the macOS Settings
+    // scene. Every route into the Settings scene from a Menu is swallowed by
+    // SwiftUI: `showSettingsWindow:` was removed in Sonoma, and both
+    // `SettingsLink` and `openSettings()` silently no-op when invoked from a
+    // Menu button action (it runs in the menu's dismissal context). `openWindow`
+    // has none of that — it fires reliably from here.
+    @Environment(\.openWindow) private var openWindow
 
     @State private var isSigningIn = false
 
@@ -83,14 +84,13 @@ struct ProfileBar: View {
         .menuIndicator(.hidden)
     }
 
-    /// Preselect the Companion tab, then open the SwiftUI `Settings` scene via
-    /// the `openSettings` environment action — the supported path on macOS 14+.
-    /// `SettingsView` reads the selected tab from `@AppStorage`, so setting the
-    /// default first lands the window on the Companion tab.
+    /// Open the dedicated Companion settings window. `openWindow(id:)` works
+    /// reliably from a Menu action, unlike anything that targets the Settings
+    /// scene. `activate` brings the app forward in case the menu was triggered
+    /// while another app held focus.
     private func openCompanionSettings() {
-        UserDefaults.standard.set(SettingsTab.companion.rawValue, forKey: SettingsTab.storageKey)
         NSApp.activate(ignoringOtherApps: true)
-        openSettings()
+        openWindow(id: "companion-settings")
     }
 
     @ViewBuilder
