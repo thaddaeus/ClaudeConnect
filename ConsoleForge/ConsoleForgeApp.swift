@@ -13,6 +13,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// user-initiated work and must not be napped while running.
     private var activityToken: NSObjectProtocol?
     private var screenObserver: NSObjectProtocol?
+    /// Displays present at the last screen-change event. Used to tell a real
+    /// display *disconnect* (the only case the fullscreen recovery is for) from
+    /// other screen-parameter changes — entering fullscreen creates a Space and
+    /// switching Spaces both fire didChangeScreenParametersNotification, but
+    /// neither removes a display.
+    private var knownDisplayIDs: Set<CGDirectDisplayID> = []
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -24,6 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             reason: "Hosting live terminal sessions")
 
         // Recover from a fullscreen window stranded on a disconnected display.
+        knownDisplayIDs = currentDisplayIDs()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -59,16 +66,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func refitWindowsAfterScreenChange() {
         DispatchQueue.main.async {
             let screens = NSScreen.screens
+            // Did this event remove a display? Only then is the fullscreen recovery
+            // warranted. Entering fullscreen (creates a Space) and switching Spaces
+            // both fire this notification with no display removed — recovering then
+            // would toggle a still-animating fullscreen window back out, collapsing it
+            // to its old size on the main desktop. Compare before any early `continue`
+            // so the snapshot updates on every event.
+            let current = self.currentDisplayIDs()
+            let displaysRemoved = !self.knownDisplayIDs.subtracting(current).isEmpty
+            self.knownDisplayIDs = current
+
             for window in NSApp.windows where window.isVisible {
                 if window.styleMask.contains(.fullScreen) {
-                    // A native-fullscreen window is fine as long as it still fills
-                    // *some* connected display. It's stranded only when its frame
-                    // matches no screen — i.e. its display was disconnected, leaving
-                    // it at the old (oversized) size. Do NOT judge it against
-                    // window.screen: mid-transition (e.g. moving fullscreen to another
-                    // display) that is nil and falls back to the built-in screen, so a
-                    // legitimately-moved window looked "mismatched" and got toggled out
-                    // onto the main screen.
+                    // A native-fullscreen window is stranded only when its display was
+                    // disconnected, leaving it at the old (oversized) size with no
+                    // screen matching its frame. Require an actual display removal so
+                    // fullscreen-enter / Space-switch events don't trip this. Do NOT
+                    // judge it against window.screen: mid-transition that is nil and
+                    // falls back to the built-in screen, so a legitimately-moved window
+                    // looked "mismatched" and got toggled out onto the main screen.
+                    guard displaysRemoved else { continue }
                     let f = window.frame
                     let fillsAScreen = screens.contains { s in
                         abs(f.width - s.frame.width) < 1 && abs(f.height - s.frame.height) < 1
@@ -90,6 +107,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 window.setFrame(f, display: true, animate: false)
             }
         }
+    }
+
+    /// The set of currently-connected displays, by stable display id. Used to
+    /// detect a disconnect (a shrinking set) vs. other screen-parameter changes.
+    private func currentDisplayIDs() -> Set<CGDirectDisplayID> {
+        Set(NSScreen.screens.compactMap {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+        })
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
