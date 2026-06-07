@@ -38,7 +38,22 @@ struct CompanionSignal {
     }
 }
 
+/// A question/prompt a session is currently blocked on, lifted as structured data
+/// from the Claude transcript (never scraped from the terminal). `kind` is
+/// `"question"` for an explicit multiple-choice question (AskUserQuestion tool) or
+/// `"permission"` for a pending tool-approval prompt (Bash/Edit/etc.).
+struct CompanionQuestion: Codable, Equatable, Sendable {
+    let kind: String
+    let title: String
+    let options: [String]
+}
+
 /// One event in the `POST /v1/events` batch payload (spec §5.1).
+///
+/// `lastPrompt`/`lastResponse`/`question` are Phase-1 content fields, populated
+/// from the session transcript on content-worthy states when the user has opted in
+/// (CompanionSettings.includeContent). All optional so older relays/clients and
+/// content-disabled events stay valid.
 struct CompanionEvent: Codable {
     let tabId: String
     let name: String
@@ -49,6 +64,15 @@ struct CompanionEvent: Codable {
     let exitCode: Int32?
     let notify: Bool
     let ts: String
+    /// True when this event carries an authoritative content read (the transcript
+    /// was consulted). The relay only applies `lastPrompt`/`lastResponse`/`question`
+    /// — including clearing a now-resolved question — when this is true; otherwise it
+    /// preserves the tab's prior content so frequent content-less updates (e.g.
+    /// `.output`) don't wipe what the phone is showing.
+    let contentIncluded: Bool
+    var lastPrompt: String?
+    var lastResponse: String?
+    var question: CompanionQuestion?
 }
 
 /// The envelope POSTed to `/v1/events` — a batch so the offline queue can flush

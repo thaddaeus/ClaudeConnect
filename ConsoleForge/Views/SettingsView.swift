@@ -169,6 +169,13 @@ struct CompanionSettingsView: View {
             }
             .disabled(!auth.isSignedIn || !settings.companionEnabled)
 
+            Section("Content") {
+                Toggle("Include conversation content", isOn: $settings.includeContent)
+                Text("Sends the last prompt, the last response, and any question the session is waiting on (with its options) to your phone. This content leaves your Mac. Read from the session transcript — never the screen.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            .disabled(!auth.isSignedIn || !settings.companionEnabled)
+
             Section("Connection") {
                 LabeledContent("Last sent", value: lastSentLabel)
                 LabeledContent("Queued events", value: "\(service.queuedCount)")

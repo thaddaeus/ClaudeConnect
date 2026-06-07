@@ -47,6 +47,32 @@ final class CompanionService {
         let event: CompanionEvent
     }
 
+    /// Captured tab metadata for an event, built on the main actor and carried into
+    /// the off-main transcript read so the enriched event can be assembled when the
+    /// content snapshot returns. Value-typed and Sendable for the actor hop.
+    private struct EventMeta: Sendable {
+        let tabId: String
+        let name: String
+        let colorHex: String
+        let icon: String
+        let workingDirectory: String
+        let state: CompanionState
+        let exitCode: Int32?
+        let notify: Bool
+        let ts: String
+
+        func event(content: TranscriptReader.Snapshot?) -> CompanionEvent {
+            CompanionEvent(
+                tabId: tabId, name: name, colorHex: colorHex, icon: icon,
+                workingDirectory: workingDirectory, state: state, exitCode: exitCode,
+                notify: notify, ts: ts,
+                contentIncluded: content != nil,
+                lastPrompt: content?.lastPrompt,
+                lastResponse: content?.lastResponse,
+                question: content?.question)
+        }
+    }
+
     nonisolated init(settings: CompanionSettings) {
         self.settings = settings
     }
@@ -58,7 +84,7 @@ final class CompanionService {
     func report(_ signal: CompanionSignal, config: SessionConfiguration?, openTabIds: [String]) {
         guard settings.companionEnabled else { return }
         self.openTabIds = openTabIds
-        let event = CompanionEvent(
+        let meta = EventMeta(
             tabId: signal.tabId.uuidString,
             name: config?.name ?? "Session",
             colorHex: config?.tabColorHex ?? "#007AFF",
@@ -67,9 +93,29 @@ final class CompanionService {
             state: signal.state,
             exitCode: signal.exitCode,
             notify: shouldNotify(signal.state),
-            ts: iso.string(from: Date())
-        )
-        enqueue(event)
+            ts: iso.string(from: Date()))
+
+        // Attach transcript content only on content-worthy states (and when opted
+        // in) — reading is skipped for high-frequency `.output` to keep snapshots
+        // cheap. The read is file IO, so it runs off the main actor and the
+        // enriched event is enqueued when it returns.
+        if settings.includeContent, shouldAttachContent(signal.state), !meta.workingDirectory.isEmpty {
+            let cwd = meta.workingDirectory
+            Task.detached(priority: .utility) {
+                let snapshot = TranscriptReader.read(workingDirectory: cwd)
+                await MainActor.run { self.enqueue(meta.event(content: snapshot)) }
+            }
+        } else {
+            enqueue(meta.event(content: nil))
+        }
+    }
+
+    /// States where the phone benefits from the conversation tail / blocking question.
+    private func shouldAttachContent(_ state: CompanionState) -> Bool {
+        switch state {
+        case .bell, .settled, .exited, .active: true
+        case .output, .idle, .closed: false
+        }
     }
 
     private func shouldNotify(_ state: CompanionState) -> Bool {
