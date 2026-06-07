@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftTerm
+import QuartzCore
 
 struct SwiftTermView: NSViewRepresentable {
     let configuration: SessionConfiguration
@@ -106,6 +107,19 @@ struct SwiftTermView: NSViewRepresentable {
         }
         context.coordinator.wasActive = isActive
 
+        // Drive a per-frame display flush on the ACTIVE tab. SwiftTerm only sets
+        // needsDisplay (via setNeedsDisplay) when fed data; in our hidden-sibling
+        // ZStack hosting AppKit doesn't auto-flush that invalidation until an
+        // event (click) forces a window display pass — so live typing/output
+        // stalls until clicked. A CADisplayLink calling displayIfNeeded() each
+        // frame reproduces that flush continuously, in sync with the screen.
+        // Only the single active tab runs a link, and the system auto-suspends
+        // it when the view's window is off-screen, so it's cheap.
+        if isActive {
+            context.coordinator.startDisplayFlush(for: nsView)
+        }
+        context.coordinator.displayLink?.isPaused = !isActive
+
         // When this terminal becomes the active tab, give it focus
         if isActive {
             DispatchQueue.main.async {
@@ -128,6 +142,11 @@ struct SwiftTermView: NSViewRepresentable {
         let lastRow = max(0, terminal.rows - 1)
         terminal.refresh(startRow: 0, endRow: lastRow)
         terminalView.needsDisplay = true
+        // Setting needsDisplay alone relies on AppKit auto-flushing the
+        // invalidation at the next window display cycle — which doesn't happen
+        // for our hidden-sibling ZStack hosting until an AppKit event fires.
+        // Force the flush now so the repaint is immediate (mimics a click).
+        terminalView.displayIfNeeded()
     }
 
     /// Strips kitty keyboard protocol push (CSI > N u) and set (CSI = N u)
@@ -173,6 +192,7 @@ struct SwiftTermView: NSViewRepresentable {
         var onBell: (() -> Void)?
         var process: PtyProcess?
         var wasActive: Bool = false
+        var displayLink: CADisplayLink?
         private weak var observedTerminalView: TerminalView?
         private var wakeObserver: NSObjectProtocol?
         private var occlusionObserver: NSObjectProtocol?
@@ -251,7 +271,28 @@ struct SwiftTermView: NSViewRepresentable {
             SwiftTermView.forceFullRepaint(view)
         }
 
+        /// Create (once) a CADisplayLink bound to the active terminal's display
+        /// that flushes any pending SwiftTerm invalidation every frame. The link
+        /// needs the view in a window; this is called from updateNSView, which
+        /// fires repeatedly, so it retries until the window exists. The system
+        /// suspends the link automatically when the window is off-screen.
+        func startDisplayFlush(for view: TerminalView) {
+            guard displayLink == nil, view.window != nil else { return }
+            let link = view.displayLink(target: self, selector: #selector(flushPendingDisplay))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+
+        @objc private func flushPendingDisplay() {
+            guard let view = observedTerminalView, !view.isHidden else { return }
+            // No-op when nothing is dirty; flushes the pending dirty region
+            // otherwise — the same effect a mouse click has, every frame.
+            view.displayIfNeeded()
+        }
+
         func removeRepaintObservers() {
+            displayLink?.invalidate()
+            displayLink = nil
             if let obs = wakeObserver {
                 NSWorkspace.shared.notificationCenter.removeObserver(obs)
             }
