@@ -20,9 +20,13 @@ enum TranscriptReader {
         var question: CompanionQuestion?
     }
 
-    // Keep payloads small — the phone only needs a readable tail, not full turns.
-    private static let maxPromptChars = 2000
-    private static let maxResponseChars = 2000
+    // The phone shows a short smart-tail preview per card but expands to the full
+    // last turn on tap, so we ship the whole turn (bounded for a sane payload) and
+    // let the PWA derive the snippet. The response aggregates every text block of
+    // the last assistant turn; a generous cap keeps the conclusion (the part that
+    // matters) instead of the old head-truncation that dropped it.
+    private static let maxPromptChars = 4000
+    private static let maxResponseChars = 16000
     private static let maxTitleChars = 500
     private static let maxOptionChars = 160
     // Only parse the end of the file; pending prompts/recent turns live at the tail.
