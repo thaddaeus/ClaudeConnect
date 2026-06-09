@@ -7,3 +7,6 @@ DerivedData/
 .swiftpm/xcode/xcuserdata
 *.xcodeproj/
 /build/
+
+# Agent worktrees (transient)
+.claude/worktrees/

@@ -4,8 +4,13 @@ struct TerminalContainerView: View {
     @Environment(SessionStore.self) private var store
     @Environment(TabActivityTracker.self) private var activityTracker
     @State private var tabStates: [UUID: SessionState] = [:]
+    @State private var manager = TerminalSessionManager()
 
     var body: some View {
+        // Reference activeTabID in body so the view recomputes (and the host
+        // re-evaluates `session:`) whenever the active tab changes.
+        let activeID = store.activeTabID
+
         VStack(spacing: 0) {
             // Tab bar
             if !store.openTabIDs.isEmpty {
@@ -17,16 +22,19 @@ struct TerminalContainerView: View {
                 if store.openTabIDs.isEmpty {
                     emptyState
                 } else {
-                    ForEach(store.openTabIDs, id: \.self) { sessionID in
-                        if let config = store.session(for: sessionID) {
-                            terminalTab(for: config, sessionID: sessionID)
-                                .opacity(store.activeTabID == sessionID ? 1 : 0)
-                                .allowsHitTesting(store.activeTabID == sessionID)
-                        }
+                    TerminalHostView(session: manager.session(for: activeID))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    // Terminated overlay for the ACTIVE session only.
+                    if let activeID,
+                       case .terminated(let code)? = tabStates[activeID] {
+                        terminatedOverlay(code: code, sessionID: activeID)
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { reconcile() }
+            .onChange(of: store.openTabIDs) { _, _ in reconcile() }
             .onChange(of: store.activeTabID) { _, newID in
                 if let tabID = newID {
                     activityTracker.didFocusTab(tabID: tabID)
@@ -35,64 +43,17 @@ struct TerminalContainerView: View {
         }
     }
 
-    @ViewBuilder
-    private func terminalTab(for config: SessionConfiguration, sessionID: UUID) -> some View {
-        let state = tabStates[sessionID] ?? .idle
-        // Ephemeral tabs restored after app restart resume their Claude session
-        let launchConfig: SessionConfiguration = {
-            if store.resumingSessionIDs.contains(sessionID) {
-                var c = config
-                c.continueSession = true
-                c.initialPrompt = nil
-                return c
+    private func terminatedOverlay(code: Int32?, sessionID: UUID) -> some View {
+        VStack(spacing: 12) {
+            Text("Process exited with code \(code ?? -1)")
+                .foregroundStyle(.secondary)
+            Button("Restart") {
+                restartSession(sessionID)
             }
-            return config
-        }()
-
-        ZStack {
-            SwiftTermView(
-                configuration: launchConfig,
-                isActive: store.activeTabID == sessionID,
-                onProcessTerminated: { exitCode in
-                    tabStates[sessionID] = .terminated(exitCode)
-                    activityTracker.didTerminate(tabID: sessionID, exitCode: exitCode)
-                    // Only emit process-exit if the tab is still open (not already
-                    // closed by user or self-close, which would have emitted their own event)
-                    if store.openTabIDs.contains(sessionID) {
-                        let tabName = store.session(for: sessionID)?.name ?? "Unknown"
-                        TabEventWriter.emitClose(tabID: sessionID, tabName: tabName, reason: .processExit, exitCode: exitCode)
-                    }
-                },
-                onOutputReceived: {
-                    activityTracker.didReceiveOutput(
-                        tabID: sessionID,
-                        isActive: store.activeTabID == sessionID
-                    )
-                },
-                onBellReceived: {
-                    activityTracker.didReceiveBell(
-                        tabID: sessionID,
-                        isActive: store.activeTabID == sessionID
-                    )
-                }
-            )
-            .onAppear {
-                tabStates[sessionID] = .running
-            }
-
-            if case .terminated(let code) = state {
-                VStack(spacing: 12) {
-                    Text("Process exited with code \(code ?? -1)")
-                        .foregroundStyle(.secondary)
-                    Button("Restart") {
-                        restartSession(sessionID)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.black.opacity(0.7))
-            }
+            .buttonStyle(.bordered)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.black.opacity(0.7))
     }
 
     private var emptyState: some View {
@@ -113,12 +74,70 @@ struct TerminalContainerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func restartSession(_ sessionID: UUID) {
-        // Remove and re-add to force view recreation
-        store.closeTab(sessionID: sessionID)
-        tabStates.removeValue(forKey: sessionID)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            store.openTab(sessionID: sessionID)
+    // MARK: - Session lifecycle
+
+    /// Bring the manager's live sessions in line with the open tabs, wiring the
+    /// per-tab callbacks (output/bell/exit tracking + terminated overlay state +
+    /// close event emission) exactly as the old per-tab `SwiftTermView` did.
+    private func reconcile() {
+        manager.reconcile(
+            openIDs: store.openTabIDs,
+            makeConfig: { id in store.session(for: id) },
+            isResuming: { id in store.resumingSessionIDs.contains(id) },
+            onOutput: { id in
+                activityTracker.didReceiveOutput(
+                    tabID: id,
+                    isActive: store.activeTabID == id
+                )
+            },
+            onBell: { id in
+                activityTracker.didReceiveBell(
+                    tabID: id,
+                    isActive: store.activeTabID == id
+                )
+            },
+            onTerminated: { id, exitCode in
+                handleTermination(id: id, exitCode: exitCode)
+            }
+        )
+        // Newly created sessions start running.
+        for id in store.openTabIDs where tabStates[id] == nil {
+            tabStates[id] = .running
         }
+    }
+
+    private func handleTermination(id: UUID, exitCode: Int32?) {
+        tabStates[id] = .terminated(exitCode)
+        activityTracker.didTerminate(tabID: id, exitCode: exitCode)
+        // Only emit process-exit if the tab is still open (not already closed by
+        // user or self-close, which would have emitted their own event).
+        if store.openTabIDs.contains(id) {
+            let tabName = store.session(for: id)?.name ?? "Unknown"
+            TabEventWriter.emitClose(tabID: id, tabName: tabName, reason: .processExit, exitCode: exitCode)
+        }
+    }
+
+    private func restartSession(_ sessionID: UUID) {
+        guard let config = store.session(for: sessionID) else { return }
+        tabStates[sessionID] = .running
+        manager.restart(
+            id: sessionID,
+            configuration: config,
+            onOutput: { id in
+                activityTracker.didReceiveOutput(
+                    tabID: id,
+                    isActive: store.activeTabID == id
+                )
+            },
+            onBell: { id in
+                activityTracker.didReceiveBell(
+                    tabID: id,
+                    isActive: store.activeTabID == id
+                )
+            },
+            onTerminated: { id, exitCode in
+                handleTermination(id: id, exitCode: exitCode)
+            }
+        )
     }
 }
