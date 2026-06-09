@@ -5,6 +5,10 @@ struct TerminalContainerView: View {
     @Environment(TabActivityTracker.self) private var activityTracker
     @State private var tabStates: [UUID: SessionState] = [:]
     @State private var manager = TerminalSessionManager()
+    /// Gates session creation until the real terminal-area size is known, so sessions
+    /// are never born at the placeholder size (whose reflow-on-mount corrupts the
+    /// SwiftTerm buffer — especially for restored/--resume tabs).
+    @State private var hasRealSize = false
 
     var body: some View {
         // Reference activeTabID in body so the view recomputes (and the host
@@ -33,6 +37,16 @@ struct TerminalContainerView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                // Track the live terminal-area size. `initial: true` fires with the
+                // first laid-out size so sessions are sized before they're created.
+                GeometryReader { proxy in
+                    Color.clear
+                        .onChange(of: proxy.size, initial: true) { _, newSize in
+                            handleSizeChange(newSize)
+                        }
+                }
+            }
             .onAppear { reconcile() }
             .onChange(of: store.openTabIDs) { _, _ in reconcile() }
             .onChange(of: store.activeTabID) { _, newID in
@@ -79,7 +93,22 @@ struct TerminalContainerView: View {
     /// Bring the manager's live sessions in line with the open tabs, wiring the
     /// per-tab callbacks (output/bell/exit tracking + terminated overlay state +
     /// close event emission) exactly as the old per-tab `SwiftTermView` did.
+    /// Feed the live terminal-area size to the manager (resizing all live sessions in
+    /// lockstep). The first real size flips `hasRealSize` and kicks the initial
+    /// reconcile, so sessions are created already sized to the real area.
+    private func handleSizeChange(_ size: CGSize) {
+        guard size.width > 1, size.height > 1 else { return }
+        manager.setSize(size)
+        if !hasRealSize {
+            hasRealSize = true
+            reconcile()
+        }
+    }
+
     private func reconcile() {
+        // Wait for a real size — otherwise sessions would be born at the placeholder
+        // size and reflow-corrupt on first mount. handleSizeChange re-invokes us.
+        guard hasRealSize else { return }
         manager.reconcile(
             openIDs: store.openTabIDs,
             resolveLaunch: { id in store.resolveLaunch(for: id) },

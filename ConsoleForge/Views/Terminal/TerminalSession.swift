@@ -27,9 +27,20 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
     private var fullScreenEnterObserver: NSObjectProtocol?
     private var fullScreenExitObserver: NSObjectProtocol?
 
-    init(sessionID: UUID, configuration: SessionConfiguration, resume: Bool = false) {
+    init(sessionID: UUID, configuration: SessionConfiguration, resume: Bool = false,
+         initialSize: CGSize = CGSize(width: 800, height: 600)) {
         self.sessionID = sessionID
-        let terminalView = TerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        // Birth the view at the REAL terminal-area size, never a placeholder. A
+        // session created at a stale size (e.g. an 800×600 default) and only resized
+        // to the real area on first mount forces SwiftTerm to reflow whatever already
+        // accumulated in the buffer — and that reflow corrupts the buffer model
+        // permanently (restored/--resume tabs flood resumed history at the wrong width
+        // before they're ever mounted). Sizing correctly up front makes mount a pure
+        // re-parent with no reflow. Falls back to 800×600 only if no size is known yet.
+        let frame = (initialSize.width > 1 && initialSize.height > 1)
+            ? NSRect(origin: .zero, size: initialSize)
+            : NSRect(x: 0, y: 0, width: 800, height: 600)
+        let terminalView = TerminalView(frame: frame)
         self.terminalView = terminalView
         super.init()
 
@@ -120,6 +131,19 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
     /// Called when this session's view is swapped out (no longer active).
     func unmount() {
         displayLink?.isPaused = true
+    }
+
+    /// Keep a (possibly detached) terminal sized to the live terminal area. Detached
+    /// views aren't in the hierarchy, so AppKit autoresizing never fires for them;
+    /// without this they'd stay at their birth size and reflow in one big jump on the
+    /// next mount. Resizing in lockstep means every reflow is a small incremental one
+    /// on an already-correct buffer (exactly what the active tab survives), never the
+    /// corrupting placeholder→real jump. Setting the frame drives SwiftTerm's
+    /// `setFrameSize` → terminal resize → `sizeChanged` → PTY `setWindowSize`.
+    func resize(to size: CGSize) {
+        guard size.width > 1, size.height > 1 else { return }
+        guard terminalView.frame.size != size else { return }
+        terminalView.frame = NSRect(origin: terminalView.frame.origin, size: size)
     }
 
     /// Tear down the session permanently: stop the display link, remove observers,

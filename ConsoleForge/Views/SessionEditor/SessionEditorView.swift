@@ -33,7 +33,7 @@ struct SessionEditorView: View {
     var onSaveAndLaunch: (SessionConfiguration) -> Void
     var onCancel: () -> Void
 
-    private let models = ["", "opus", "sonnet", "haiku"]
+    private let models = ["", "opus", "opusplan", "sonnet", "haiku", "fable"]
     private let efforts = ["", "low", "medium", "high", "max"]
     private let iconOptions = [
         "terminal", "bolt", "cpu", "server.rack",
@@ -138,7 +138,7 @@ struct SessionEditorView: View {
                                 )) {
                                     Text("Default").tag("")
                                     ForEach(models.dropFirst(), id: \.self) { model in
-                                        Text(model.capitalized).tag(model)
+                                        Text(model == "opusplan" ? "Opus Plan" : model.capitalized).tag(model)
                                     }
                                 }
                                 .labelsHidden()

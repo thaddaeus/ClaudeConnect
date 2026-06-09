@@ -10,9 +10,25 @@ import SwiftTerm
 final class TerminalSessionManager {
     private(set) var sessions: [UUID: TerminalSession] = [:]
 
+    /// The live terminal-area size. New sessions are born at this size and all
+    /// existing sessions are resized to it, so a tab is never reflowed from a stale
+    /// placeholder size on first mount (which corrupts the SwiftTerm buffer model).
+    private(set) var currentSize = CGSize(width: 800, height: 600)
+
     func session(for id: UUID?) -> TerminalSession? {
         guard let id else { return nil }
         return sessions[id]
+    }
+
+    /// Update the live terminal-area size and keep every session (active + detached)
+    /// in lockstep. Call this before `reconcile` so newly created sessions start at
+    /// the real size rather than the placeholder.
+    func setSize(_ size: CGSize) {
+        guard size.width > 1, size.height > 1 else { return }
+        currentSize = size
+        for session in sessions.values {
+            session.resize(to: size)
+        }
     }
 
     /// Bring the live session set in line with `openIDs`: shut down + drop any
@@ -37,7 +53,7 @@ final class TerminalSessionManager {
         // Create sessions for newly opened tabs.
         for id in openIDs where sessions[id] == nil {
             guard let launch = resolveLaunch(id) else { continue }
-            let session = TerminalSession(sessionID: id, configuration: launch.config, resume: launch.resume)
+            let session = TerminalSession(sessionID: id, configuration: launch.config, resume: launch.resume, initialSize: currentSize)
             wire(session, id: id, onOutput: onOutput, onBell: onBell, onTerminated: onTerminated)
             sessions[id] = session
         }
@@ -55,7 +71,7 @@ final class TerminalSessionManager {
         onTerminated: @escaping (UUID, Int32?) -> Void
     ) {
         sessions[id]?.shutdown()
-        let session = TerminalSession(sessionID: id, configuration: configuration, resume: resume)
+        let session = TerminalSession(sessionID: id, configuration: configuration, resume: resume, initialSize: currentSize)
         wire(session, id: id, onOutput: onOutput, onBell: onBell, onTerminated: onTerminated)
         sessions[id] = session
     }

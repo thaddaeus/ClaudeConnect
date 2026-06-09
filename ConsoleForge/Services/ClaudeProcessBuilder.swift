@@ -192,7 +192,7 @@ struct ClaudeProcessBuilder {
     Usage: consoleforge-tab [options]
       --name NAME              Tab name
       --cwd PATH               Working directory
-      --model MODEL            Claude model (opus, sonnet, haiku)
+      --model MODEL            Claude model (opus, opusplan, sonnet, haiku, fable)
       --permission-mode MODE   Permission mode (default, plan, acceptEdits, auto, dontAsk, bypassPermissions)
       --effort LEVEL           Effort level (low, medium, high, max)
       --system-prompt TEXT     Replace system prompt
