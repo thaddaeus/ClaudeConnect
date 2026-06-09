@@ -22,6 +22,11 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     var openInConsoleForge: Bool = true
     var isEphemeral: Bool = false
     var folderID: UUID?
+    /// The Claude CLI session id this tab owns. Pinned on a fresh launch via
+    /// `--session-id` and re-attached on restore via `--resume`, so a restored
+    /// tab continues ITS OWN conversation instead of "the most recent in this
+    /// directory" (`--continue`) — which would interleave tabs sharing a cwd.
+    var claudeSessionID: UUID?
 
     // Custom decoder to handle missing keys from older sessions.json files
     init(from decoder: Decoder) throws {
@@ -46,6 +51,7 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
         openInConsoleForge = try c.decodeIfPresent(Bool.self, forKey: .openInConsoleForge) ?? true
         isEphemeral = try c.decodeIfPresent(Bool.self, forKey: .isEphemeral) ?? false
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
+        claudeSessionID = try c.decodeIfPresent(UUID.self, forKey: .claudeSessionID)
     }
 
     init() {}

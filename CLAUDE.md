@@ -20,12 +20,23 @@ swift build
 swift run
 ```
 
-Update the running app without a full release:
+Hot-swap the running app without a full release — **always use `scripts/dev.sh`**:
 ```bash
-swift build -c release
-cp .build/release/ConsoleForge build/ConsoleForge.app/Contents/MacOS/ConsoleForge
-open build/ConsoleForge.app
+./scripts/dev.sh           # release config (default)
+./scripts/dev.sh debug     # faster debug build
 ```
+
+The script does build → quit running app → swap binary into the **installed** app at
+`/Applications/ConsoleForge.app` → **re-sign with the Developer ID** → relaunch. It targets
+the prod install in place so the app you normally launch is the one you're testing. The
+re-sign step is mandatory: copying a fresh binary into the bundle invalidates its signature,
+so the Keychain treats every relaunch as a new untrusted app and forces the login-**password**
+prompt on the companion token read (Touch ID / Apple Watch cannot authorize a new app identity
+against an existing item). Re-signing with the stable Developer ID keeps a constant designated
+requirement — click "Always Allow" once and no future hot-swap prompts. (Re-signing locally
+strips the notarization staple from this install until the next `./scripts/build.sh` install —
+expected for a dev build.) **Never hand-swap with a bare `cp` + `open`** (the old recipe); it
+reintroduces the password storm.
 
 ## Releasing
 

@@ -27,7 +27,7 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
     private var fullScreenEnterObserver: NSObjectProtocol?
     private var fullScreenExitObserver: NSObjectProtocol?
 
-    init(sessionID: UUID, configuration: SessionConfiguration) {
+    init(sessionID: UUID, configuration: SessionConfiguration, resume: Bool = false) {
         self.sessionID = sessionID
         let terminalView = TerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         self.terminalView = terminalView
@@ -50,7 +50,7 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         terminalView.terminalDelegate = self
 
         // Start the Claude process via posix_spawn (no fork)
-        let params = ClaudeProcessBuilder.build(from: configuration, tabID: configuration.id)
+        let params = ClaudeProcessBuilder.build(from: configuration, tabID: configuration.id, resume: resume)
         do {
             let process = try PtyProcess(
                 executable: params.executable,

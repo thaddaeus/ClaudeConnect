@@ -17,11 +17,11 @@ final class TerminalSessionManager {
 
     /// Bring the live session set in line with `openIDs`: shut down + drop any
     /// session whose id has left the open set, and create a session for any new
-    /// id (applying the ephemeral-resume launch rule and wiring the callbacks).
+    /// id. `resolveLaunch` yields the launch config (with its pinned Claude
+    /// session id) and whether to resume it; both flow into the new session.
     func reconcile(
         openIDs: [UUID],
-        makeConfig: (UUID) -> SessionConfiguration?,
-        isResuming: (UUID) -> Bool,
+        resolveLaunch: (UUID) -> (config: SessionConfiguration, resume: Bool)?,
         onOutput: @escaping (UUID) -> Void,
         onBell: @escaping (UUID) -> Void,
         onTerminated: @escaping (UUID, Int32?) -> Void
@@ -36,25 +36,26 @@ final class TerminalSessionManager {
 
         // Create sessions for newly opened tabs.
         for id in openIDs where sessions[id] == nil {
-            guard let config = makeConfig(id) else { continue }
-            let launchConfig = resolvedLaunchConfig(config, isResuming: isResuming(id))
-            let session = TerminalSession(sessionID: id, configuration: launchConfig)
+            guard let launch = resolveLaunch(id) else { continue }
+            let session = TerminalSession(sessionID: id, configuration: launch.config, resume: launch.resume)
             wire(session, id: id, onOutput: onOutput, onBell: onBell, onTerminated: onTerminated)
             sessions[id] = session
         }
     }
 
     /// Tear down one session and recreate it (used by Restart). The replacement
-    /// uses the given configuration verbatim and re-wires the callbacks.
+    /// launches with the given config/resume (see `SessionStore.resolveLaunch`,
+    /// which pins a fresh Claude session id for the restart) and re-wires callbacks.
     func restart(
         id: UUID,
         configuration: SessionConfiguration,
+        resume: Bool = false,
         onOutput: @escaping (UUID) -> Void,
         onBell: @escaping (UUID) -> Void,
         onTerminated: @escaping (UUID, Int32?) -> Void
     ) {
         sessions[id]?.shutdown()
-        let session = TerminalSession(sessionID: id, configuration: configuration)
+        let session = TerminalSession(sessionID: id, configuration: configuration, resume: resume)
         wire(session, id: id, onOutput: onOutput, onBell: onBell, onTerminated: onTerminated)
         sessions[id] = session
     }
@@ -64,15 +65,6 @@ final class TerminalSessionManager {
             session.shutdown()
         }
         sessions.removeAll()
-    }
-
-    private func resolvedLaunchConfig(_ config: SessionConfiguration, isResuming: Bool) -> SessionConfiguration {
-        // Ephemeral tabs restored after app restart resume their Claude session.
-        guard isResuming else { return config }
-        var c = config
-        c.continueSession = true
-        c.initialPrompt = nil
-        return c
     }
 
     private func wire(

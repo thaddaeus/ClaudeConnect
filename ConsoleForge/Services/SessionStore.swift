@@ -54,9 +54,14 @@ class SessionStore {
             activeTabID = decoded.activeTabID.flatMap { sessionIDs.contains($0) ? $0 : nil }
                 ?? openTabIDs.last
 
-            // Mark ephemeral sessions that were open — they'll resume with --continue
-            for session in sessions where session.isEphemeral {
-                if openTabIDs.contains(session.id) {
+            // Mark restored open tabs to resume their prior Claude session. In prod
+            // only ephemeral tabs resume; under dev hot-swap every open tab resumes
+            // so a build relaunch continues each tab's conversation. Resume is keyed
+            // to each tab's own Claude session id (see SessionConfiguration.claudeSessionID
+            // and ClaudeProcessBuilder), so tabs sharing a working directory never
+            // collide — unlike `--continue`, which would interleave them.
+            for session in sessions where openTabIDs.contains(session.id) {
+                if session.isEphemeral || DevMode.isHotSwap {
                     resumingSessionIDs.insert(session.id)
                 }
             }
@@ -100,6 +105,33 @@ class SessionStore {
         sessions.append(session)
         save()
         return session
+    }
+
+    /// Resolve a tab's launch: ensure it owns a Claude session id and report
+    /// whether this launch should resume (re-attach to) it. A fresh launch is
+    /// pinned to a NEW id (so `--session-id` never collides with an existing
+    /// session); a restored tab keeps its id and resumes it. Either way two tabs
+    /// in the same working directory own distinct ids and never interleave.
+    /// `resumingSessionIDs` is one-shot — consumed here so a later relaunch of the
+    /// same tab (e.g. Restart) starts fresh.
+    func resolveLaunch(for id: UUID) -> (config: SessionConfiguration, resume: Bool)? {
+        guard var config = session(for: id) else { return nil }
+        let wantsResume = resumingSessionIDs.contains(id)
+        resumingSessionIDs.remove(id)
+
+        // The explicit user "Continue previous session" toggle owns the resume
+        // semantics (`--continue`); don't pin a ConsoleForge session id there.
+        if config.continueSession {
+            return (config, false)
+        }
+        if wantsResume, config.claudeSessionID != nil {
+            // Resuming an existing conversation — don't re-fire the initial prompt.
+            config.initialPrompt = nil
+            return (config, true)
+        }
+        config.claudeSessionID = UUID()
+        updateSession(config)
+        return (config, false)
     }
 
     func updateSession(_ config: SessionConfiguration) {

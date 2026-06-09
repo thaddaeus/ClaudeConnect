@@ -82,8 +82,7 @@ struct TerminalContainerView: View {
     private func reconcile() {
         manager.reconcile(
             openIDs: store.openTabIDs,
-            makeConfig: { id in store.session(for: id) },
-            isResuming: { id in store.resumingSessionIDs.contains(id) },
+            resolveLaunch: { id in store.resolveLaunch(for: id) },
             onOutput: { id in
                 activityTracker.didReceiveOutput(
                     tabID: id,
@@ -118,11 +117,12 @@ struct TerminalContainerView: View {
     }
 
     private func restartSession(_ sessionID: UUID) {
-        guard let config = store.session(for: sessionID) else { return }
+        guard let launch = store.resolveLaunch(for: sessionID) else { return }
         tabStates[sessionID] = .running
         manager.restart(
             id: sessionID,
-            configuration: config,
+            configuration: launch.config,
+            resume: launch.resume,
             onOutput: { id in
                 activityTracker.didReceiveOutput(
                     tabID: id,

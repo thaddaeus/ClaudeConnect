@@ -73,7 +73,7 @@ class ShellEnvironment {
 
 struct ClaudeProcessBuilder {
 
-    static func build(from config: SessionConfiguration, tabID: UUID? = nil) -> ProcessParams {
+    static func build(from config: SessionConfiguration, tabID: UUID? = nil, resume: Bool = false) -> ProcessParams {
         let env = ShellEnvironment.shared
 
         // Build the claude command string with all arguments
@@ -129,8 +129,22 @@ struct ClaudeProcessBuilder {
             parts.append(contentsOf: ["--mcp-config", shellQuote(mcp)])
         }
 
-        if config.continueSession {
+        // Session identity & resume. Each tab owns a stable Claude session id
+        // (config.claudeSessionID) so a restored tab re-attaches to ITS OWN
+        // conversation by id rather than "the most recent in this directory".
+        // That makes two tabs sharing a working directory impossible to
+        // interleave — the failure mode of `--continue`.
+        //   - Restore: --resume <id> re-attaches to this tab's prior session.
+        //   - User "Continue previous session" toggle: --continue, as documented
+        //     (most recent in cwd) — its semantics are the user's explicit choice.
+        //   - Fresh launch: --session-id <id> pins the id so a future restore can
+        //     resume exactly this conversation.
+        if resume, let sid = config.claudeSessionID {
+            parts.append(contentsOf: ["--resume", sid.uuidString])
+        } else if config.continueSession {
             parts.append("--continue")
+        } else if let sid = config.claudeSessionID {
+            parts.append(contentsOf: ["--session-id", sid.uuidString])
         }
 
         // Parse additional flags
