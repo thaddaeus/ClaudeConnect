@@ -117,6 +117,9 @@ struct SwiftTermView: NSViewRepresentable {
         // it when the view's window is off-screen, so it's cheap.
         if isActive {
             context.coordinator.startDisplayFlush(for: nsView)
+            context.coordinator.startHealTimer(for: nsView)
+        } else {
+            context.coordinator.stopHealTimer()
         }
         context.coordinator.displayLink?.isPaused = !isActive
 
@@ -193,6 +196,7 @@ struct SwiftTermView: NSViewRepresentable {
         var process: PtyProcess?
         var wasActive: Bool = false
         var displayLink: CADisplayLink?
+        private var healTimer: Timer?
         private weak var observedTerminalView: TerminalView?
         private var wakeObserver: NSObjectProtocol?
         private var occlusionObserver: NSObjectProtocol?
@@ -290,9 +294,39 @@ struct SwiftTermView: NSViewRepresentable {
             view.displayIfNeeded()
         }
 
+        /// Low-frequency full-repaint safety net on the ACTIVE terminal. The
+        /// per-frame CADisplayLink above only flushes SwiftTerm's *incremental*
+        /// dirty regions, which drift out of sync in our hidden-sibling ZStack
+        /// (heavy background output corrupts the row-dirty bookkeeping), and the
+        /// display link itself can be suspended by the system in this layout —
+        /// so neither reliably re-syncs a tab that comes back garbled. An
+        /// independent Timer in .common mode forces a *full* repaint from the
+        /// buffer model a few times a second, so the visible tab can never stay
+        /// stale longer than the interval — it self-heals without a click. Only
+        /// the single active tab runs one, so the cost is one terminal redraw.
+        func startHealTimer(for view: TerminalView) {
+            guard healTimer == nil else { return }
+            observedTerminalView = view
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                guard let view = self?.observedTerminalView, !view.isHidden else { return }
+                SwiftTermView.forceFullRepaint(view)
+            }
+            // .common so it keeps firing during scroll/selection tracking, not
+            // just in the default runloop mode.
+            RunLoop.main.add(timer, forMode: .common)
+            healTimer = timer
+        }
+
+        func stopHealTimer() {
+            healTimer?.invalidate()
+            healTimer = nil
+        }
+
         func removeRepaintObservers() {
             displayLink?.invalidate()
             displayLink = nil
+            healTimer?.invalidate()
+            healTimer = nil
             if let obs = wakeObserver {
                 NSWorkspace.shared.notificationCenter.removeObserver(obs)
             }
