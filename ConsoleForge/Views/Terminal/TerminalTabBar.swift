@@ -44,6 +44,13 @@ struct TerminalTabBar: View {
         return parent.tabColor
     }
 
+    /// Whether `session` is the parent of any open grouped tab.
+    private func isGroupParent(_ session: SessionConfiguration) -> Bool {
+        store.openTabIDs.contains { id in
+            store.session(for: id)?.parentTabID == session.id
+        }
+    }
+
     /// Whether `session` is the last member of its group in tab order — the next
     /// tab is neither its parent nor a sibling child of the same parent.
     private func isLastInGroup(_ session: SessionConfiguration) -> Bool {
@@ -104,23 +111,27 @@ struct TerminalTabBar: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay {
             // Identity color: left+top+right outline (open bottom), dimmed when
-            // inactive. The dot above is pure status; this is the tab's color.
-            // On grouped children the outline shifts down (and, on the last tab
-            // of a group, inward) to make room for the parent's stripe.
+            // inactive — except on a group parent, whose outline stays at full
+            // strength so the group's anchor color is always readable. The dot
+            // above is pure status; this is the tab's color. On grouped children
+            // the outline shifts down (and, on the last tab of a group, inward)
+            // to make room for the parent's stripe.
             TabIdentityOutline(cornerRadius: 4,
                                topInset: parentColor != nil ? 1.5 : 0,
                                trailingInset: capsGroup ? 1.5 : 0)
-                .stroke(session.tabColor.opacity(isActive ? 1 : 0.4),
+                .stroke(session.tabColor.opacity(isActive || isGroupParent(session) ? 1 : 0.4),
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
         }
         .overlay {
             // Group linkage: a full-thickness band of the parent's color across
-            // the top, stacked ABOVE the child's own identity color. On the last
-            // tab of the group it turns the corner and runs down the right edge,
-            // closing the group bracket.
+            // the top, stacked ABOVE the child's own identity color — always at
+            // full strength, matching the parent's outline, so the group reads
+            // as one continuous line regardless of which tab is active. On the
+            // last tab of the group it turns the corner and runs down the right
+            // edge, closing the group bracket.
             if let parentColor {
                 TabGroupStripe(cornerRadius: 4, capTrailing: capsGroup)
-                    .stroke(parentColor.opacity(isActive ? 1 : 0.4),
+                    .stroke(parentColor,
                             style: StrokeStyle(lineWidth: 1.5, lineCap: .butt))
             }
         }
