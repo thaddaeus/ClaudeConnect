@@ -95,12 +95,13 @@ struct TerminalTabBar: View {
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
         }
         .overlay {
-            // Group linkage: the spawning tab's color takes over the leading half
-            // of the top border — a visual handoff from parent to spawned tab.
+            // Group linkage: the spawning tab's color takes over the upper half
+            // of the top border (full width) — parent color layered over the
+            // child's own identity color.
             if let parentColor = groupParentColor(for: session) {
-                TabTopLeadingHalfOutline(cornerRadius: 4)
+                TabTopParentStripe(cornerRadius: 4)
                     .stroke(parentColor.opacity(isActive ? 1 : 0.4),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .butt))
+                            style: StrokeStyle(lineWidth: 0.75, lineCap: .butt))
             }
         }
         .opacity(draggingTabID == session.id ? 0.4 : 1)
@@ -158,17 +159,20 @@ struct TabIdentityOutline: Shape {
     }
 }
 
-/// The leading half of the top edge (after the corner radius) — overlaid in the
-/// group parent's color on spawned tabs.
-struct TabTopLeadingHalfOutline: Shape {
+/// The full width of the top edge (between the corner radii) at half the
+/// identity-outline thickness — overlaid in the group parent's color on spawned
+/// tabs, so the top border reads parent color over the child's own color.
+struct TabTopParentStripe: Shape {
     var cornerRadius: CGFloat
 
     func path(in rect: CGRect) -> Path {
         let inset: CGFloat = 0.75
-        let top = rect.minY + inset
+        // Centerline for a 0.75pt stroke covering the upper half of the 1.5pt
+        // identity stroke (which spans minY...minY+1.5).
+        let y = rect.minY + 0.375
         var p = Path()
-        p.move(to: CGPoint(x: rect.minX + inset + cornerRadius, y: top))
-        p.addLine(to: CGPoint(x: rect.midX, y: top))
+        p.move(to: CGPoint(x: rect.minX + inset + cornerRadius, y: y))
+        p.addLine(to: CGPoint(x: rect.maxX - inset - cornerRadius, y: y))
         return p
     }
 }
