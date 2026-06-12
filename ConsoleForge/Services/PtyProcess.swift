@@ -164,9 +164,8 @@ class PtyProcess {
 
     func setWindowSize(cols: Int, rows: Int) {
         guard cols > 0, rows > 0 else { return }
-        // Only send TIOCSWINSZ when the size actually changes — the kernel
-        // sends SIGWINCH on every call regardless, and duplicate signals
-        // cause the child process to redraw unnecessarily.
+        // Skip redundant TIOCSWINSZ calls. (The kernel only raises SIGWINCH when
+        // the winsize actually changes, so duplicates are pure ioctl noise.)
         guard cols != lastCols || rows != lastRows else { return }
         lastCols = cols
         lastRows = rows
@@ -174,6 +173,22 @@ class PtyProcess {
         size.ws_col = UInt16(cols)
         size.ws_row = UInt16(rows)
         _ = ioctl(masterFd, TIOCSWINSZ, &size)
+    }
+
+    /// Re-deliver SIGWINCH to the PTY's foreground process group without changing
+    /// the winsize. The kernel only raises SIGWINCH on an actual size change, so a
+    /// child that missed or raced the signal during an animated window transition
+    /// never repaints its idle TUI — this nudges it. A child that already handled
+    /// the resize treats it as a no-op (node emits 'resize' only when dimensions
+    /// changed), and a child with no WINCH handler ignores it (default disposition),
+    /// so this is safe to send unconditionally. No input bytes touch the PTY.
+    func nudgeWinch() {
+        let pgrp = tcgetpgrp(masterFd)
+        if pgrp > 0 {
+            killpg(pgrp, SIGWINCH)
+        } else {
+            kill(pid, SIGWINCH)
+        }
     }
 
     func terminate() {

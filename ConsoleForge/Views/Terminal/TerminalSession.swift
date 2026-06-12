@@ -146,6 +146,14 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         terminalView.frame = NSRect(origin: terminalView.frame.origin, size: size)
     }
 
+    /// Ask the child to repaint its TUI at the current geometry by re-delivering
+    /// SIGWINCH (no winsize change, no input bytes). Used after a coalesced resize
+    /// settles so an idle Claude redraws its prompt/status instead of staying
+    /// garbled until the next output. See `PtyProcess.nudgeWinch`.
+    func nudgeRedraw() {
+        process?.nudgeWinch()
+    }
+
     /// Tear down the session permanently: stop the display link, remove observers,
     /// and terminate the backing process.
     func shutdown() {

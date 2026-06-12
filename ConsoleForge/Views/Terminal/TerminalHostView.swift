@@ -24,6 +24,30 @@ final class TerminalSessionManager {
     /// placeholder size on first mount (which corrupts the SwiftTerm buffer model).
     private(set) var currentSize = CGSize(width: 800, height: 600)
 
+    /// True once the first real size has been applied. The bootstrap size must land
+    /// synchronously — `handleSizeChange` reconciles right after `setSize` returns
+    /// and sessions must be born at the real size (task 9528) — so only sizes after
+    /// the first are debounced.
+    private var hasAppliedRealSize = false
+    /// Latest size seen during an in-flight resize burst; applied when the trailing
+    /// debounce fires.
+    private var pendingSize: CGSize?
+    private var resizeDebounce: Task<Void, Never>?
+    private var settleNudge: Task<Void, Never>?
+    /// Intermediate sizes swallowed since the last apply, for CFDebugGeometry.
+    private var coalescedCount = 0
+
+    /// Trailing debounce for resize bursts. The animated fullscreen enter/exit
+    /// (~0.5s) fires frameDidChange at many intermediate sizes; reflowing SwiftTerm
+    /// and SIGWINCHing the PTY at each one makes Claude redraw its bottom-anchored
+    /// TUI at several wrong widths (transient garble + orphaned prompt lines in
+    /// scrollback). Only the final geometry should reach the terminal (task 9543).
+    private static let debounceInterval: Duration = .milliseconds(140)
+    /// Delay after the final geometry lands before re-delivering SIGWINCH, so the
+    /// nudge arrives after the transition (and the child's own resize handling)
+    /// has settled.
+    private static let nudgeDelay: Duration = .milliseconds(300)
+
     func session(for id: UUID?) -> TerminalSession? {
         guard let id else { return nil }
         return sessions[id]
@@ -32,14 +56,59 @@ final class TerminalSessionManager {
     /// Update the live terminal-area size and keep every session (active + detached)
     /// in lockstep. Call this before `reconcile` so newly created sessions start at
     /// the real size rather than the placeholder.
+    ///
+    /// The first real size applies synchronously; later sizes are coalesced with a
+    /// trailing debounce so a burst of intermediate geometries (animated fullscreen
+    /// transition, live window drag) produces exactly one SwiftTerm reflow + PTY
+    /// winsize at the final size.
     func setSize(_ size: CGSize) {
         guard size.width > 1, size.height > 1 else { return }
+        guard hasAppliedRealSize else {
+            hasAppliedRealSize = true
+            applySize(size)
+            return
+        }
+        pendingSize = size
+        coalescedCount += 1
+        resizeDebounce?.cancel()
+        resizeDebounce = Task { [weak self] in
+            do { try await Task.sleep(for: Self.debounceInterval) } catch { return }
+            guard let self else { return }
+            self.resizeDebounce = nil
+            if let pending = self.pendingSize, pending != self.currentSize {
+                self.applySize(pending)
+            }
+            self.pendingSize = nil
+            self.coalescedCount = 0
+        }
+    }
+
+    private func applySize(_ size: CGSize) {
         currentSize = size
         if CFDebug.geometry {
-            print("[geom] setSize container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count)")
+            print("[geom] setSize container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count) coalesced=\(coalescedCount)")
         }
+        coalescedCount = 0
         for session in sessions.values {
             session.resize(to: size)
+        }
+        scheduleSettleNudge()
+    }
+
+    /// After the final geometry lands and the transition settles, re-deliver
+    /// SIGWINCH to each child (task 9543 part 2). A child that already handled the
+    /// resize treats it as a no-op (node emits 'resize' only when the dimensions
+    /// actually changed); a child that missed or raced the original signal repaints
+    /// its idle prompt/status instead of staying garbled until the next output.
+    private func scheduleSettleNudge() {
+        settleNudge?.cancel()
+        settleNudge = Task { [weak self] in
+            do { try await Task.sleep(for: Self.nudgeDelay) } catch { return }
+            guard let self else { return }
+            self.settleNudge = nil
+            for session in self.sessions.values {
+                session.nudgeRedraw()
+            }
         }
     }
 
@@ -89,6 +158,8 @@ final class TerminalSessionManager {
     }
 
     func shutdownAll() {
+        resizeDebounce?.cancel()
+        settleNudge?.cancel()
         for session in sessions.values {
             session.shutdown()
         }
@@ -123,6 +194,10 @@ struct TerminalHostView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         container.autoresizingMask = [.width, .height]
+        // The terminal view's frame intentionally trails the container during a
+        // resize burst (coalesced sizing, task 9543) — clip so an old-size terminal
+        // can't paint outside the terminal area while the window is shrinking.
+        container.clipsToBounds = true
 
         // The single source of truth for the terminal-area size. SwiftUI's
         // GeometryReader is unreliable across the animated fullscreen↔windowed
@@ -170,10 +245,14 @@ struct TerminalHostView: NSViewRepresentable {
         }
         context.coordinator.mountedSession = nil
 
-        // Mount the new terminal.
+        // Mount the new terminal. No autoresizing mask: AppKit would resize the
+        // mounted view at every frame of an animated window transition, reflowing
+        // SwiftTerm at each intermediate size and bypassing the manager's coalesced
+        // setSize path — which is the single source of frame changes for mounted
+        // and detached terminals alike (task 9543).
         if let session, let target {
             target.frame = container.bounds
-            target.autoresizingMask = [.width, .height]
+            target.autoresizingMask = []
             container.addSubview(target)
             context.coordinator.mountedSession = session
             session.mount()
