@@ -36,12 +36,20 @@ struct TerminalTabBar: View {
         }
     }
 
+    /// The parent tab's color when `session` is a grouped child whose parent is open.
+    private func groupParentColor(for session: SessionConfiguration) -> Color? {
+        guard let pid = session.parentTabID,
+              store.openTabIDs.contains(pid),
+              let parent = store.session(for: pid) else { return nil }
+        return parent.tabColor
+    }
+
     private func tabButton(session: SessionConfiguration, isActive: Bool) -> some View {
         let activity = activityTracker.activity(for: session.id)
         let isHovered = hoveredTabID == session.id
         return HStack(spacing: 6) {
             Circle()
-                .fill(activity.attentionColor ?? session.tabColor)
+                .fill(activity.statusDotColor)
                 .frame(width: 8, height: 8)
 
             Image(systemName: session.tabIconName)
@@ -71,13 +79,6 @@ struct TerminalTabBar: View {
                 ? Color(nsColor: .selectedControlColor).opacity(0.3)
                 : (isHovered ? Color.primary.opacity(0.06) : .clear)
         )
-        .overlay(alignment: .bottom) {
-            if isActive {
-                Rectangle()
-                    .fill(session.tabColor)
-                    .frame(height: 2)
-            }
-        }
         .overlay(alignment: .leading) {
             if dropTargetTabID == session.id {
                 Rectangle()
@@ -85,8 +86,24 @@ struct TerminalTabBar: View {
                     .frame(width: 2)
             }
         }
-        .opacity(draggingTabID == session.id ? 0.4 : 1)
         .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay {
+            // Identity color: left+top+right outline (open bottom), dimmed when
+            // inactive. The dot above is pure status; this is the tab's color.
+            TabIdentityOutline(cornerRadius: 4)
+                .stroke(session.tabColor.opacity(isActive ? 1 : 0.4),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+        }
+        .overlay {
+            // Group linkage: the spawning tab's color takes over the leading half
+            // of the top border — a visual handoff from parent to spawned tab.
+            if let parentColor = groupParentColor(for: session) {
+                TabTopLeadingHalfOutline(cornerRadius: 4)
+                    .stroke(parentColor.opacity(isActive ? 1 : 0.4),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .butt))
+            }
+        }
+        .opacity(draggingTabID == session.id ? 0.4 : 1)
         .contentShape(Rectangle())
         .onHover { hovering in
             hoveredTabID = hovering ? session.id : nil
@@ -111,6 +128,48 @@ struct TerminalTabBar: View {
                 Label("Close Tab", systemImage: "xmark")
             }
         }
+    }
+}
+
+// MARK: - Tab outline shapes
+
+/// Left + top + right edges with rounded top corners and an OPEN bottom —
+/// strokes a tab's identity color without closing the shape into a box.
+struct TabIdentityOutline: Shape {
+    var cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let inset: CGFloat = 0.75 // keeps the 1.5pt stroke inside the tab's bounds
+        let minX = rect.minX + inset
+        let maxX = rect.maxX - inset
+        let top = rect.minY + inset
+        var p = Path()
+        p.move(to: CGPoint(x: minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: minX, y: top + cornerRadius))
+        p.addArc(center: CGPoint(x: minX + cornerRadius, y: top + cornerRadius),
+                 radius: cornerRadius,
+                 startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        p.addLine(to: CGPoint(x: maxX - cornerRadius, y: top))
+        p.addArc(center: CGPoint(x: maxX - cornerRadius, y: top + cornerRadius),
+                 radius: cornerRadius,
+                 startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
+        p.addLine(to: CGPoint(x: maxX, y: rect.maxY))
+        return p
+    }
+}
+
+/// The leading half of the top edge (after the corner radius) — overlaid in the
+/// group parent's color on spawned tabs.
+struct TabTopLeadingHalfOutline: Shape {
+    var cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let inset: CGFloat = 0.75
+        let top = rect.minY + inset
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + inset + cornerRadius, y: top))
+        p.addLine(to: CGPoint(x: rect.midX, y: top))
+        return p
     }
 }
 

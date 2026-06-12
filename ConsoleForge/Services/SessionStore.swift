@@ -219,7 +219,8 @@ class SessionStore {
 
     func openTab(sessionID: UUID) {
         if !openTabIDs.contains(sessionID) {
-            openTabIDs.append(sessionID)
+            let idx = session(for: sessionID).map { insertionIndex(for: $0) } ?? openTabIDs.count
+            openTabIDs.insert(sessionID, at: idx)
         }
         activeTabID = sessionID
         save()
@@ -231,7 +232,7 @@ class SessionStore {
         session.isEphemeral = true
         sessions.append(session)
         if !openTabIDs.contains(session.id) {
-            openTabIDs.append(session.id)
+            openTabIDs.insert(session.id, at: insertionIndex(for: session))
         }
         activeTabID = session.id
         save()
@@ -252,6 +253,10 @@ class SessionStore {
         let tabName = sessions.first(where: { $0.id == sessionID })?.name ?? "Unknown"
         TabEventWriter.emitClose(tabID: sessionID, tabName: tabName, reason: reason, exitCode: exitCode)
 
+        // Children of a closing parent stay open and simply leave the group.
+        for i in sessions.indices where sessions[i].parentTabID == sessionID {
+            sessions[i].parentTabID = nil
+        }
         openTabIDs.removeAll { $0 == sessionID }
         // Remove ephemeral sessions when their tab is closed
         if let idx = sessions.firstIndex(where: { $0.id == sessionID && $0.isEphemeral }) {
@@ -284,12 +289,39 @@ class SessionStore {
     }
 
     func moveTab(id: UUID, before targetID: UUID?) {
-        guard let srcIdx = openTabIDs.firstIndex(of: id) else { return }
-        openTabIDs.remove(at: srcIdx)
-        if let targetID, let targetIdx = openTabIDs.firstIndex(of: targetID) {
-            openTabIDs.insert(id, at: targetIdx)
-        } else {
-            openTabIDs.append(id)
+        guard openTabIDs.contains(id) else { return }
+        // A parent moves with its children as one block.
+        let block = [id] + childTabs(of: id)
+        // Dropping a group onto itself is a no-op.
+        if let targetID, block.contains(targetID) { return }
+
+        openTabIDs.removeAll { block.contains($0) }
+
+        var insertAt = openTabIDs.count
+        if let targetID, var targetIdx = openTabIDs.firstIndex(of: targetID) {
+            // Don't split a foreign group: dropping onto one of its children places
+            // the moved block before the whole group instead.
+            if let targetParent = groupParent(of: targetID),
+               session(for: id)?.parentTabID != targetParent,
+               let parentIdx = openTabIDs.firstIndex(of: targetParent) {
+                targetIdx = parentIdx
+            }
+            insertAt = targetIdx
+        }
+        openTabIDs.insert(contentsOf: block, at: insertAt)
+
+        // A child that landed outside its parent's contiguous run leaves the group.
+        if let pid = groupParent(of: id),
+           let parentIdx = openTabIDs.firstIndex(of: pid),
+           let myIdx = openTabIDs.firstIndex(of: id) {
+            var runEnd = parentIdx + 1
+            while runEnd < openTabIDs.count,
+                  session(for: openTabIDs[runEnd])?.parentTabID == pid {
+                runEnd += 1
+            }
+            if !(myIdx > parentIdx && myIdx < runEnd) {
+                ungroupTab(id)
+            }
         }
         save()
     }
@@ -299,6 +331,38 @@ class SessionStore {
               let idx = openTabIDs.firstIndex(of: current) else { return }
         let prev = (idx - 1 + openTabIDs.count) % openTabIDs.count
         activeTabID = openTabIDs[prev]
+    }
+
+    // MARK: - Tab Groups
+
+    /// Open tabs whose sessions name `parentID` as their group parent, in tab order.
+    func childTabs(of parentID: UUID) -> [UUID] {
+        openTabIDs.filter { session(for: $0)?.parentTabID == parentID }
+    }
+
+    /// The group parent of an open tab, when that parent is itself still open.
+    func groupParent(of id: UUID) -> UUID? {
+        guard let pid = session(for: id)?.parentTabID, openTabIDs.contains(pid) else { return nil }
+        return pid
+    }
+
+    private func ungroupTab(_ id: UUID) {
+        if let idx = sessions.firstIndex(where: { $0.id == id }) {
+            sessions[idx].parentTabID = nil
+        }
+    }
+
+    /// Where a newly opened tab goes: directly after its group parent's existing
+    /// children (keeping the group contiguous), or at the end when ungrouped.
+    private func insertionIndex(for config: SessionConfiguration) -> Int {
+        guard let pid = config.parentTabID, let parentIdx = openTabIDs.firstIndex(of: pid) else {
+            return openTabIDs.count
+        }
+        var idx = parentIdx + 1
+        while idx < openTabIDs.count, session(for: openTabIDs[idx])?.parentTabID == pid {
+            idx += 1
+        }
+        return idx
     }
 
     // MARK: - Helpers

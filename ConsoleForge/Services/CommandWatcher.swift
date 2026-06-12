@@ -14,6 +14,9 @@ struct TabCommand: Codable {
     var additionalFlags: [String]?
     var tabColor: String?
     var continueSession: Bool?
+    /// The spawning tab's id (CLI fills it from $CONSOLEFORGE_TAB_ID) — groups the
+    /// new tab under the tab the command was run in.
+    var parentTabID: String?
     /// Tab ID for close-tab action (matches CONSOLEFORGE_TAB_ID env var)
     var tabID: String?
 }

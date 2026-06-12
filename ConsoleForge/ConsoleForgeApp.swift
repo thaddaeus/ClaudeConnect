@@ -331,6 +331,13 @@ struct ConsoleForgeApp: App {
         if let flags = command.additionalFlags { config.additionalFlags = flags.joined(separator: "\n") }
         if let color = command.tabColor { config.tabColorHex = color }
         if let cont = command.continueSession { config.continueSession = cont }
+        // Group under the spawning tab when the CLI ran inside one and that tab is
+        // still open (stale ids from dead environments are ignored).
+        if let parentStr = command.parentTabID,
+           let parentID = UUID(uuidString: parentStr),
+           store.openTabIDs.contains(parentID) {
+            config.parentTabID = parentID
+        }
 
         store.openEphemeralTab(config)
 

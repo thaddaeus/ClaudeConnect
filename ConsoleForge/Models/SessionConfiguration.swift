@@ -22,6 +22,11 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     var openInConsoleForge: Bool = true
     var isEphemeral: Bool = false
     var folderID: UUID?
+    /// The open tab that spawned this one (via `consoleforge-tab` run inside that
+    /// tab). Grouped tabs stay adjacent in the tab bar and draw the parent's color
+    /// on the leading half of their top border. Cleared when the parent closes or
+    /// this tab is dragged out of the group.
+    var parentTabID: UUID?
     /// The Claude CLI session id this tab owns. Pinned on a fresh launch via
     /// `--session-id` and re-attached on restore via `--resume`, so a restored
     /// tab continues ITS OWN conversation instead of "the most recent in this
@@ -51,6 +56,7 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
         openInConsoleForge = try c.decodeIfPresent(Bool.self, forKey: .openInConsoleForge) ?? true
         isEphemeral = try c.decodeIfPresent(Bool.self, forKey: .isEphemeral) ?? false
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
+        parentTabID = try c.decodeIfPresent(UUID.self, forKey: .parentTabID)
         claudeSessionID = try c.decodeIfPresent(UUID.self, forKey: .claudeSessionID)
     }
 

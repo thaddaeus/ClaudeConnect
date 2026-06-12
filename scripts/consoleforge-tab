@@ -21,6 +21,8 @@ Open options:
   --flag FLAG              Additional CLI flag (can be repeated)
   --color HEX              Tab color (e.g. "#FF2D55")
   --continue               Continue previous session
+  --no-group               Don't group under the spawning tab (when run inside a
+                           ConsoleForge tab, new tabs group under it by default)
 
 Close options:
   --close-self             Close the tab this command runs in (reads CONSOLEFORGE_TAB_ID)
@@ -174,6 +176,7 @@ def main():
 
     cmd = {"action": "close-tab" if is_close else "open-tab"}
     flags = []
+    no_group = False
 
     while i < len(args):
         arg = args[i]
@@ -204,6 +207,8 @@ def main():
             cmd["tabColor"] = args[i + 1]; i += 2
         elif arg == "--continue":
             cmd["continueSession"] = True; i += 1
+        elif arg == "--no-group":
+            no_group = True; i += 1
         else:
             print(f"Unknown option: {arg}", file=sys.stderr)
             sys.exit(1)
@@ -218,6 +223,13 @@ def main():
 
     if flags:
         cmd["additionalFlags"] = flags
+
+    # Tabs spawned from inside a ConsoleForge tab group under that tab (the app
+    # ignores stale/closed parent ids). --no-group opts out.
+    if not no_group:
+        parent_id = os.environ.get("CONSOLEFORGE_TAB_ID")
+        if parent_id:
+            cmd["parentTabID"] = parent_id
 
     # Generate a tab ID so the caller can reference it for --wait-for-close
     import uuid

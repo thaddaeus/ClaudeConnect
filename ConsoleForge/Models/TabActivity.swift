@@ -65,13 +65,19 @@ class TabActivityTracker {
         bellTabs.remove(tabID)
         unreadTabs.remove(tabID)
         cancelSettleTimer(for: tabID)
+        // A dead process stays .exited (red dot) — focusing can't revive it. The
+        // companion still hears about the focus for its board refresh.
+        if activities[tabID] == .exited {
+            emit(tabID, .active)
+            return
+        }
         setState(.active, for: tabID)
     }
 
     /// Called when a tab's process terminates
     func didTerminate(tabID: UUID, exitCode: Int32? = nil) {
         cancelSettleTimer(for: tabID)
-        activities[tabID] = .idle
+        activities[tabID] = .exited
         emit(tabID, .exited, exitCode: exitCode)
     }
 
@@ -107,6 +113,11 @@ class TabActivityTracker {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.settleTimers[tabID] = nil
+            // The turn finished — flip the dot from working to settled. Direct set,
+            // not setState: the .settled emit below already covers the companion.
+            if self.activities[tabID] == .output {
+                self.activities[tabID] = .settled
+            }
             self.emit(tabID, .settled)
         }
         settleTimers[tabID] = work
@@ -126,15 +137,33 @@ enum TabActivity {
     case active
     /// Tab has unread output (background tab received data)
     case output
+    /// Background tab went quiet after output — its turn finished
+    case settled
     /// Tab received a bell — likely needs user attention (permission prompt, question)
     case bell
+    /// Tab's process terminated (tab still open showing the dead session)
+    case exited
 
     var indicatorColor: Color {
         switch self {
         case .idle: .gray
         case .active: .green
         case .output: .blue
+        case .settled: .gray
         case .bell: .yellow
+        case .exited: .red
+        }
+    }
+
+    /// Pure STATUS color for the tab bar dot — identity color lives on the tab's
+    /// outline, so the dot only answers "what is this session doing?":
+    /// working (green), needs input (amber), idle/settled (gray), exited (red).
+    var statusDotColor: Color {
+        switch self {
+        case .active, .output: .green
+        case .bell: .orange
+        case .idle, .settled: Color.gray.opacity(0.55)
+        case .exited: .red
         }
     }
 
@@ -144,7 +173,7 @@ enum TabActivity {
     var attentionColor: Color? {
         switch self {
         case .bell: .yellow
-        case .idle, .active, .output: nil
+        case .idle, .active, .output, .settled, .exited: nil
         }
     }
 
@@ -154,7 +183,9 @@ enum TabActivity {
         case .idle: .idle
         case .active: .active
         case .output: .output
+        case .settled: .settled
         case .bell: .bell
+        case .exited: .exited
         }
     }
 }
