@@ -32,6 +32,8 @@ struct SettingsView: View {
 
 struct GeneralSettingsView: View {
     @AppStorage("claudeBinaryPath") private var claudeBinaryPath: String = ""
+    @AppStorage(LinkPastingTerminalView.pasteLinksAsMarkdownKey)
+    private var pasteLinksAsMarkdown = true
     @State private var detectedPath: String?
 
     var body: some View {
@@ -62,6 +64,13 @@ struct GeneralSettingsView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
+            }
+
+            Section("Pasting") {
+                Toggle("Paste hyperlinks as Markdown links", isOn: $pasteLinksAsMarkdown)
+                Text("When the clipboard holds rich text with hyperlinks (e.g. copied from Slack), paste [label](url) so the URL survives. Plain text and bare URLs paste unchanged. Turn off for raw paste.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)

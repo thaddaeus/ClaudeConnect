@@ -40,7 +40,7 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         let frame = (initialSize.width > 1 && initialSize.height > 1)
             ? NSRect(origin: .zero, size: initialSize)
             : NSRect(x: 0, y: 0, width: 800, height: 600)
-        let terminalView = TerminalView(frame: frame)
+        let terminalView = LinkPastingTerminalView(frame: frame)
         self.terminalView = terminalView
         super.init()
 
