@@ -1,6 +1,15 @@
 import SwiftUI
 import SwiftTerm
 
+/// Debug toggles. Enable geometry tracing with:
+///   defaults write <bundle-id> CFDebugGeometry -bool YES
+/// (read once at launch — relaunch to change). When on, the resize pipeline logs the
+/// triple `container px → SwiftTerm cols×rows → PTY winsize` so a row/height desync is
+/// provable rather than eyeballed. See task 9528.
+enum CFDebug {
+    static let geometry = UserDefaults.standard.bool(forKey: "CFDebugGeometry")
+}
+
 /// Retains one `TerminalSession` per open tab, independent of the view hierarchy.
 /// Only the active session's view is mounted (see `TerminalHostView`); the rest
 /// keep running detached. The manager creates/destroys sessions in `reconcile`
@@ -26,6 +35,9 @@ final class TerminalSessionManager {
     func setSize(_ size: CGSize) {
         guard size.width > 1, size.height > 1 else { return }
         currentSize = size
+        if CFDebug.geometry {
+            print("[geom] setSize container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count)")
+        }
         for session in sessions.values {
             session.resize(to: size)
         }
@@ -102,14 +114,48 @@ final class TerminalSessionManager {
 /// terminals stay detached but alive — owned by `TerminalSessionManager`.
 struct TerminalHostView: NSViewRepresentable {
     let session: TerminalSession?
+    /// Called with the live terminal-area size whenever the container's frame changes.
+    /// The container's bounds always reflect the real area (window size, fullscreen
+    /// mode, and sidebar width all flow through the view hierarchy to it), so this is
+    /// the authoritative, AppKit-driven size source — wired to the manager's `setSize`.
+    let onContainerResize: (CGSize) -> Void
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         container.autoresizingMask = [.width, .height]
+
+        // The single source of truth for the terminal-area size. SwiftUI's
+        // GeometryReader is unreliable across the animated fullscreen↔windowed
+        // transition — it can fail to re-fire, leaving the grid's ROW count stale so
+        // Claude's bottom-anchored input box overstrikes (task 9528). AppKit's
+        // frameDidChange fires on every real geometry change, so we drive resize from
+        // the container's actual bounds instead.
+        container.postsFrameChangedNotifications = true
+        context.coordinator.onResize = onContainerResize
+        context.coordinator.frameObserver = NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: container,
+            queue: .main
+        ) { [weak coordinator = context.coordinator] note in
+            MainActor.assumeIsolated {
+                guard let view = note.object as? NSView else { return }
+                coordinator?.onResize?(view.bounds.size)
+            }
+        }
         return container
     }
 
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        if let obs = coordinator.frameObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+        coordinator.frameObserver = nil
+    }
+
     func updateNSView(_ container: NSView, context: Context) {
+        // Keep the resize callback current (SwiftUI hands us a fresh closure each pass).
+        context.coordinator.onResize = onContainerResize
+
         let current = container.subviews.first as? TerminalView
         let target = session?.terminalView
 
@@ -144,5 +190,9 @@ struct TerminalHostView: NSViewRepresentable {
         /// on it when swapping (the outgoing view's owning session isn't always
         /// the new `session` value).
         var mountedSession: TerminalSession?
+        /// Latest resize callback (refreshed each `updateNSView`).
+        var onResize: ((CGSize) -> Void)?
+        /// Token for the container's frame-change observer, removed on dismantle.
+        var frameObserver: NSObjectProtocol?
     }
 }

@@ -288,6 +288,10 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
     nonisolated func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         MainActor.assumeIsolated {
             process?.setWindowSize(cols: newCols, rows: newRows)
+            if CFDebug.geometry {
+                let f = terminalView.frame.size
+                print("[geom] sizeChanged session=\(sessionID.uuidString.prefix(8)) view=\(Int(f.width))×\(Int(f.height)) → grid=\(newCols)×\(newRows) (pushed to PTY)")
+            }
         }
     }
 

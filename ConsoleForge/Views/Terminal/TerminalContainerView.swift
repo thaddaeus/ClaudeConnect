@@ -26,7 +26,8 @@ struct TerminalContainerView: View {
                 if store.openTabIDs.isEmpty {
                     emptyState
                 } else {
-                    TerminalHostView(session: manager.session(for: activeID))
+                    TerminalHostView(session: manager.session(for: activeID),
+                                     onContainerResize: handleSizeChange)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     // Terminated overlay for the ACTIVE session only.
@@ -38,8 +39,11 @@ struct TerminalContainerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
-                // Track the live terminal-area size. `initial: true` fires with the
-                // first laid-out size so sessions are sized before they're created.
+                // Bootstrap the live terminal-area size: `initial: true` fires with the
+                // first laid-out size so sessions are sized before they're created. The
+                // authoritative ONGOING size source is the container NSView's
+                // frameDidChange (see TerminalHostView.onContainerResize) — SwiftUI's
+                // GeometryReader can miss the animated fullscreen transition.
                 GeometryReader { proxy in
                     Color.clear
                         .onChange(of: proxy.size, initial: true) { _, newSize in
