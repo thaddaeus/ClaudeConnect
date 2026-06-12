@@ -128,10 +128,12 @@ struct TerminalTabBar: View {
             // focus leaves the group entirely the parent dims like any other
             // tab. The dot above is pure status; this is the tab's color. On
             // grouped children the outline shifts down (and, on the last tab of
-            // a group, inward) to make room for the parent's stripe.
+            // a group, inward) to make room for the parent's stripe, and drops
+            // its left edge so the group reads as one connected strip.
             TabIdentityOutline(cornerRadius: 4,
                                topInset: parentColor != nil ? 1.5 : 0,
                                trailingInset: capsGroup ? 1.5 : 0,
+                               includeLeading: parentColor == nil,
                                includeTrailing: !yieldsToChild)
                 .stroke(session.tabColor.opacity(isActive || yieldsToChild ? 1 : 0.4),
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
@@ -189,13 +191,17 @@ struct TerminalTabBar: View {
 /// Left + top + right edges with rounded top corners and an OPEN bottom —
 /// strokes a tab's identity color without closing the shape into a box.
 /// `topInset`/`trailingInset` shift those edges inward so a group-parent stripe
-/// can stack outside them at full thickness. With `includeTrailing: false` the
-/// path stops at the end of the top edge so `TabTrailingEdge` can be stroked
-/// separately at a different opacity.
+/// can stack outside them at full thickness. With `includeLeading: false`
+/// (grouped children) the left edge and top-left arc are dropped and the top
+/// line starts flush at the tab's leading edge, connecting it to the tab
+/// before it. With `includeTrailing: false` the path stops at the end of the
+/// top edge so `TabTrailingEdge` can be stroked separately at a different
+/// opacity.
 struct TabIdentityOutline: Shape {
     var cornerRadius: CGFloat
     var topInset: CGFloat = 0
     var trailingInset: CGFloat = 0
+    var includeLeading: Bool = true
     var includeTrailing: Bool = true
 
     func path(in rect: CGRect) -> Path {
@@ -204,11 +210,15 @@ struct TabIdentityOutline: Shape {
         let maxX = rect.maxX - inset - trailingInset
         let top = rect.minY + inset + topInset
         var p = Path()
-        p.move(to: CGPoint(x: minX, y: rect.maxY))
-        p.addLine(to: CGPoint(x: minX, y: top + cornerRadius))
-        p.addArc(center: CGPoint(x: minX + cornerRadius, y: top + cornerRadius),
-                 radius: cornerRadius,
-                 startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        if includeLeading {
+            p.move(to: CGPoint(x: minX, y: rect.maxY))
+            p.addLine(to: CGPoint(x: minX, y: top + cornerRadius))
+            p.addArc(center: CGPoint(x: minX + cornerRadius, y: top + cornerRadius),
+                     radius: cornerRadius,
+                     startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        } else {
+            p.move(to: CGPoint(x: rect.minX, y: top))
+        }
         p.addLine(to: CGPoint(x: maxX - cornerRadius, y: top))
         guard includeTrailing else { return p }
         p.addArc(center: CGPoint(x: maxX - cornerRadius, y: top + cornerRadius),
