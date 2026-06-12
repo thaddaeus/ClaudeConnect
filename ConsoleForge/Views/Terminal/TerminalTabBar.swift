@@ -44,9 +44,24 @@ struct TerminalTabBar: View {
         return parent.tabColor
     }
 
+    /// Whether `session` is the last member of its group in tab order — the next
+    /// tab is neither its parent nor a sibling child of the same parent.
+    private func isLastInGroup(_ session: SessionConfiguration) -> Bool {
+        guard let pid = session.parentTabID,
+              let idx = store.openTabIDs.firstIndex(of: session.id) else { return false }
+        let nextIdx = idx + 1
+        guard nextIdx < store.openTabIDs.count else { return true }
+        let nextID = store.openTabIDs[nextIdx]
+        if nextID == pid { return false }
+        if let next = store.session(for: nextID), next.parentTabID == pid { return false }
+        return true
+    }
+
     private func tabButton(session: SessionConfiguration, isActive: Bool) -> some View {
         let activity = activityTracker.activity(for: session.id)
         let isHovered = hoveredTabID == session.id
+        let parentColor = groupParentColor(for: session)
+        let capsGroup = parentColor != nil && isLastInGroup(session)
         return HStack(spacing: 6) {
             Circle()
                 .fill(activity.statusDotColor)
@@ -90,18 +105,23 @@ struct TerminalTabBar: View {
         .overlay {
             // Identity color: left+top+right outline (open bottom), dimmed when
             // inactive. The dot above is pure status; this is the tab's color.
-            TabIdentityOutline(cornerRadius: 4)
+            // On grouped children the outline shifts down (and, on the last tab
+            // of a group, inward) to make room for the parent's stripe.
+            TabIdentityOutline(cornerRadius: 4,
+                               topInset: parentColor != nil ? 1.5 : 0,
+                               trailingInset: capsGroup ? 1.5 : 0)
                 .stroke(session.tabColor.opacity(isActive ? 1 : 0.4),
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
         }
         .overlay {
-            // Group linkage: the spawning tab's color takes over the upper half
-            // of the top border (full width) — parent color layered over the
-            // child's own identity color.
-            if let parentColor = groupParentColor(for: session) {
-                TabTopParentStripe(cornerRadius: 4)
+            // Group linkage: a full-thickness band of the parent's color across
+            // the top, stacked ABOVE the child's own identity color. On the last
+            // tab of the group it turns the corner and runs down the right edge,
+            // closing the group bracket.
+            if let parentColor {
+                TabGroupStripe(cornerRadius: 4, capTrailing: capsGroup)
                     .stroke(parentColor.opacity(isActive ? 1 : 0.4),
-                            style: StrokeStyle(lineWidth: 0.75, lineCap: .butt))
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .butt))
             }
         }
         .opacity(draggingTabID == session.id ? 0.4 : 1)
@@ -136,14 +156,18 @@ struct TerminalTabBar: View {
 
 /// Left + top + right edges with rounded top corners and an OPEN bottom —
 /// strokes a tab's identity color without closing the shape into a box.
+/// `topInset`/`trailingInset` shift those edges inward so a group-parent stripe
+/// can stack outside them at full thickness.
 struct TabIdentityOutline: Shape {
     var cornerRadius: CGFloat
+    var topInset: CGFloat = 0
+    var trailingInset: CGFloat = 0
 
     func path(in rect: CGRect) -> Path {
         let inset: CGFloat = 0.75 // keeps the 1.5pt stroke inside the tab's bounds
         let minX = rect.minX + inset
-        let maxX = rect.maxX - inset
-        let top = rect.minY + inset
+        let maxX = rect.maxX - inset - trailingInset
+        let top = rect.minY + inset + topInset
         var p = Path()
         p.move(to: CGPoint(x: minX, y: rect.maxY))
         p.addLine(to: CGPoint(x: minX, y: top + cornerRadius))
@@ -159,20 +183,30 @@ struct TabIdentityOutline: Shape {
     }
 }
 
-/// The full width of the top edge (between the corner radii) at half the
-/// identity-outline thickness — overlaid in the group parent's color on spawned
-/// tabs, so the top border reads parent color over the child's own color.
-struct TabTopParentStripe: Shape {
+/// The group parent's stripe on a spawned tab: a full-width band across the very
+/// top, sitting ABOVE the child's (down-shifted) identity outline. Runs edge to
+/// edge so consecutive siblings' stripes read as one continuous line. With
+/// `capTrailing` (last tab in the group) it rounds the top-right corner and runs
+/// down the right edge, closing the group bracket.
+struct TabGroupStripe: Shape {
     var cornerRadius: CGFloat
+    var capTrailing: Bool
 
     func path(in rect: CGRect) -> Path {
-        let inset: CGFloat = 0.75
-        // Centerline for a 0.75pt stroke covering the upper half of the 1.5pt
-        // identity stroke (which spans minY...minY+1.5).
-        let y = rect.minY + 0.375
+        let inset: CGFloat = 0.75 // centers the 1.5pt stroke inside the tab's bounds
+        let y = rect.minY + inset
         var p = Path()
-        p.move(to: CGPoint(x: rect.minX + inset + cornerRadius, y: y))
-        p.addLine(to: CGPoint(x: rect.maxX - inset - cornerRadius, y: y))
+        p.move(to: CGPoint(x: rect.minX, y: y))
+        if capTrailing {
+            let maxX = rect.maxX - inset
+            p.addLine(to: CGPoint(x: maxX - cornerRadius, y: y))
+            p.addArc(center: CGPoint(x: maxX - cornerRadius, y: y + cornerRadius),
+                     radius: cornerRadius,
+                     startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
+            p.addLine(to: CGPoint(x: maxX, y: rect.maxY))
+        } else {
+            p.addLine(to: CGPoint(x: rect.maxX, y: y))
+        }
         return p
     }
 }
