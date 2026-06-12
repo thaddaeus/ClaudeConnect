@@ -44,11 +44,21 @@ struct TerminalTabBar: View {
         return parent.tabColor
     }
 
-    /// Whether `session` is the parent of any open grouped tab.
-    private func isGroupParent(_ session: SessionConfiguration) -> Bool {
-        store.openTabIDs.contains { id in
-            store.session(for: id)?.parentTabID == session.id
-        }
+    /// Whether the active tab is a grouped child of `session` — the parent's
+    /// trailing edge dims so the focused child reads as sitting in front.
+    private func isParentOfActiveTab(_ session: SessionConfiguration) -> Bool {
+        guard let activeID = store.activeTabID, activeID != session.id,
+              let active = store.session(for: activeID) else { return false }
+        return active.parentTabID == session.id
+    }
+
+    /// Whether the active tab belongs to the group anchored at `parentID` —
+    /// the parent itself or one of its grouped children. When focus leaves the
+    /// group, its colors dim like any other inactive tab.
+    private func groupHasFocus(parentID: UUID) -> Bool {
+        guard let activeID = store.activeTabID else { return false }
+        if activeID == parentID { return true }
+        return store.session(for: activeID)?.parentTabID == parentID
     }
 
     /// Whether `session` is the last member of its group in tab order — the next
@@ -69,6 +79,7 @@ struct TerminalTabBar: View {
         let isHovered = hoveredTabID == session.id
         let parentColor = groupParentColor(for: session)
         let capsGroup = parentColor != nil && isLastInGroup(session)
+        let yieldsToChild = isParentOfActiveTab(session)
         return HStack(spacing: 6) {
             Circle()
                 .fill(activity.statusDotColor)
@@ -111,27 +122,37 @@ struct TerminalTabBar: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay {
             // Identity color: left+top+right outline (open bottom), dimmed when
-            // inactive — except on a group parent, whose outline stays at full
-            // strength so the group's anchor color is always readable. The dot
-            // above is pure status; this is the tab's color. On grouped children
-            // the outline shifts down (and, on the last tab of a group, inward)
-            // to make room for the parent's stripe.
+            // inactive. A group parent whose CHILD has focus keeps left+top at
+            // full strength (the group's anchor color) but dims its trailing
+            // edge, so the focused child reads as sitting in front of it. When
+            // focus leaves the group entirely the parent dims like any other
+            // tab. The dot above is pure status; this is the tab's color. On
+            // grouped children the outline shifts down (and, on the last tab of
+            // a group, inward) to make room for the parent's stripe.
             TabIdentityOutline(cornerRadius: 4,
                                topInset: parentColor != nil ? 1.5 : 0,
-                               trailingInset: capsGroup ? 1.5 : 0)
-                .stroke(session.tabColor.opacity(isActive || isGroupParent(session) ? 1 : 0.4),
+                               trailingInset: capsGroup ? 1.5 : 0,
+                               includeTrailing: !yieldsToChild)
+                .stroke(session.tabColor.opacity(isActive || yieldsToChild ? 1 : 0.4),
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            if yieldsToChild {
+                TabTrailingEdge(cornerRadius: 4,
+                                topInset: parentColor != nil ? 1.5 : 0,
+                                trailingInset: capsGroup ? 1.5 : 0)
+                    .stroke(session.tabColor.opacity(0.4),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            }
         }
         .overlay {
             // Group linkage: a full-thickness band of the parent's color across
-            // the top, stacked ABOVE the child's own identity color — always at
-            // full strength, matching the parent's outline, so the group reads
-            // as one continuous line regardless of which tab is active. On the
-            // last tab of the group it turns the corner and runs down the right
-            // edge, closing the group bracket.
-            if let parentColor {
+            // the top, stacked ABOVE the child's own identity color. Full
+            // strength while focus is inside the group (so the group reads as
+            // one continuous line), dimmed with the rest of the group when
+            // focus is elsewhere. On the last tab of the group it turns the
+            // corner and runs down the right edge, closing the group bracket.
+            if let parentColor, let pid = session.parentTabID {
                 TabGroupStripe(cornerRadius: 4, capTrailing: capsGroup)
-                    .stroke(parentColor,
+                    .stroke(parentColor.opacity(groupHasFocus(parentID: pid) ? 1 : 0.4),
                             style: StrokeStyle(lineWidth: 1.5, lineCap: .butt))
             }
         }
@@ -168,11 +189,14 @@ struct TerminalTabBar: View {
 /// Left + top + right edges with rounded top corners and an OPEN bottom —
 /// strokes a tab's identity color without closing the shape into a box.
 /// `topInset`/`trailingInset` shift those edges inward so a group-parent stripe
-/// can stack outside them at full thickness.
+/// can stack outside them at full thickness. With `includeTrailing: false` the
+/// path stops at the end of the top edge so `TabTrailingEdge` can be stroked
+/// separately at a different opacity.
 struct TabIdentityOutline: Shape {
     var cornerRadius: CGFloat
     var topInset: CGFloat = 0
     var trailingInset: CGFloat = 0
+    var includeTrailing: Bool = true
 
     func path(in rect: CGRect) -> Path {
         let inset: CGFloat = 0.75 // keeps the 1.5pt stroke inside the tab's bounds
@@ -186,6 +210,29 @@ struct TabIdentityOutline: Shape {
                  radius: cornerRadius,
                  startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
         p.addLine(to: CGPoint(x: maxX - cornerRadius, y: top))
+        guard includeTrailing else { return p }
+        p.addArc(center: CGPoint(x: maxX - cornerRadius, y: top + cornerRadius),
+                 radius: cornerRadius,
+                 startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
+        p.addLine(to: CGPoint(x: maxX, y: rect.maxY))
+        return p
+    }
+}
+
+/// The trailing portion of `TabIdentityOutline` — top-right arc + right edge —
+/// as its own shape, so a group parent can dim just this edge while a child has
+/// focus. Geometry mirrors `TabIdentityOutline` exactly.
+struct TabTrailingEdge: Shape {
+    var cornerRadius: CGFloat
+    var topInset: CGFloat = 0
+    var trailingInset: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let inset: CGFloat = 0.75
+        let maxX = rect.maxX - inset - trailingInset
+        let top = rect.minY + inset + topInset
+        var p = Path()
+        p.move(to: CGPoint(x: maxX - cornerRadius, y: top))
         p.addArc(center: CGPoint(x: maxX - cornerRadius, y: top + cornerRadius),
                  radius: cornerRadius,
                  startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
