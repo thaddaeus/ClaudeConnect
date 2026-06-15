@@ -27,7 +27,8 @@ struct TerminalContainerView: View {
                     emptyState
                 } else {
                     TerminalHostView(session: manager.session(for: activeID),
-                                     onContainerResize: handleSizeChange)
+                                     onContainerResize: handleSizeChange,
+                                     onResync: { manager.resync(to: $0) })
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     // Terminated overlay for the ACTIVE session only.

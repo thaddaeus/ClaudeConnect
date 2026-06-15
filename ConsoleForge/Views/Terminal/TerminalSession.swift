@@ -154,6 +154,15 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         process?.nudgeWinch()
     }
 
+    /// Force the child to fully regenerate its TUI even when the grid dimensions are
+    /// unchanged, by briefly jiggling the PTY winsize (a bare same-size SIGWINCH is
+    /// swallowed by renderers that only redraw on an actual dimension change). Used by
+    /// sleep/wake + display-reconfiguration recovery to overwrite a corrupted/stale
+    /// live region. No input bytes touch the PTY. See `PtyProcess.jiggleWindowSize`.
+    func forceRedraw() {
+        process?.jiggleWindowSize()
+    }
+
     /// Tear down the session permanently: stop the display link, remove observers,
     /// and terminate the backing process.
     func shutdown() {

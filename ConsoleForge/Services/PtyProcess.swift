@@ -191,6 +191,22 @@ class PtyProcess {
         }
     }
 
+    /// Coax the child into a FULL re-render even when the real dimensions didn't
+    /// change: briefly shrink the winsize by one row, then restore it after a short
+    /// gap. The kernel raises SIGWINCH only on an actual change and node-based TUIs
+    /// (incl. Claude's renderer) re-render only then, so a same-size nudge alone can be
+    /// a no-op — the jiggle guarantees two real changes ending at the correct size,
+    /// repainting the whole live region over any corruption. The gap keeps the two
+    /// ioctls from collapsing into a single SIGWINCH. No input bytes touch the PTY.
+    func jiggleWindowSize() {
+        let cols = lastCols, rows = lastRows
+        guard cols > 0, rows > 1 else { nudgeWinch(); return }
+        setWindowSize(cols: cols, rows: rows - 1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.setWindowSize(cols: cols, rows: rows)
+        }
+    }
+
     func terminate() {
         kill(pid, SIGHUP)
     }

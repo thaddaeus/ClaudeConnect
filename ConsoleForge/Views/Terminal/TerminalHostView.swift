@@ -112,6 +112,44 @@ final class TerminalSessionManager {
         }
     }
 
+    /// Recover the grid after an event that can desync SwiftTerm + the PTY from the
+    /// view WITHOUT a reliable frame change: display sleep/wake, an external display
+    /// connecting/disconnecting, or a forced un-fullscreen. The trigger that exposed
+    /// this: fullscreen on an external display, the Mac sleeps, the external is
+    /// unplugged, and the lid opens to a windowed app on the built-in screen — the
+    /// window geometry changes while asleep, and the wake/fullscreen observers only
+    /// *repaint* (redrawing the stale layout), never re-assert the size or make Claude
+    /// regenerate its output. So: re-assert the TRUE current size to every session,
+    /// repaint from the buffer model, then (after the geometry settles) force each
+    /// child to redraw its full TUI at the correct size — overwriting a corrupted or
+    /// stale-width live region that a plain repaint can't fix. `size` is the
+    /// container's real bounds, read at call time (not the possibly-stale cached size).
+    func resync(to size: CGSize) {
+        guard size.width > 1, size.height > 1 else { return }
+        resizeDebounce?.cancel()
+        resizeDebounce = nil
+        pendingSize = nil
+        if CFDebug.geometry {
+            print("[geom] resync container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count)")
+        }
+        currentSize = size
+        for session in sessions.values {
+            session.resize(to: size)   // re-assert frame → SwiftTerm reflow → PTY winsize (no-op if unchanged)
+            session.forceFullRepaint() // redraw the rendered surface from the buffer model
+        }
+        // After AppKit settles the new geometry, force a full child redraw so an idle
+        // Claude regenerates its bottom-anchored TUI at the correct width.
+        settleNudge?.cancel()
+        settleNudge = Task { [weak self] in
+            do { try await Task.sleep(for: Self.nudgeDelay) } catch { return }
+            guard let self else { return }
+            self.settleNudge = nil
+            for session in self.sessions.values {
+                session.forceRedraw()
+            }
+        }
+    }
+
     /// Bring the live session set in line with `openIDs`: shut down + drop any
     /// session whose id has left the open set, and create a session for any new
     /// id. `resolveLaunch` yields the launch config (with its pinned Claude
@@ -190,6 +228,11 @@ struct TerminalHostView: NSViewRepresentable {
     /// mode, and sidebar width all flow through the view hierarchy to it), so this is
     /// the authoritative, AppKit-driven size source — wired to the manager's `setSize`.
     let onContainerResize: (CGSize) -> Void
+    /// Called with the container's real bounds after a sleep/wake or display
+    /// reconfiguration settles — wired to the manager's `resync`, which re-asserts the
+    /// size and forces a redraw (a plain frame change isn't guaranteed across these
+    /// events, and the existing repaint-only handlers can't fix a stale-width grid).
+    let onResync: (CGSize) -> Void
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
@@ -206,7 +249,9 @@ struct TerminalHostView: NSViewRepresentable {
         // frameDidChange fires on every real geometry change, so we drive resize from
         // the container's actual bounds instead.
         container.postsFrameChangedNotifications = true
+        context.coordinator.container = container
         context.coordinator.onResize = onContainerResize
+        context.coordinator.onResync = onResync
         context.coordinator.frameObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification,
             object: container,
@@ -217,6 +262,26 @@ struct TerminalHostView: NSViewRepresentable {
                 coordinator?.onResize?(view.bounds.size)
             }
         }
+
+        // Display sleep/wake and screen reconfiguration (e.g. fullscreen on an
+        // external display → sleep → unplug → lid open to a windowed app on the
+        // built-in screen) change the window geometry while the app is asleep, so a
+        // `frameDidChange` for the final size isn't guaranteed and the grid can be left
+        // desynced. Re-read the TRUE bounds once AppKit settles and force a re-sync.
+        let resyncAfterSettle: @Sendable (Notification) -> Void = { [weak coordinator = context.coordinator] _ in
+            MainActor.assumeIsolated {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    guard let coordinator, let view = coordinator.container else { return }
+                    coordinator.onResync?(view.bounds.size)
+                }
+            }
+        }
+        context.coordinator.wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: resyncAfterSettle
+        )
+        context.coordinator.screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main, using: resyncAfterSettle
+        )
         return container
     }
 
@@ -224,12 +289,21 @@ struct TerminalHostView: NSViewRepresentable {
         if let obs = coordinator.frameObserver {
             NotificationCenter.default.removeObserver(obs)
         }
+        if let obs = coordinator.wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+        }
+        if let obs = coordinator.screenObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
         coordinator.frameObserver = nil
+        coordinator.wakeObserver = nil
+        coordinator.screenObserver = nil
     }
 
     func updateNSView(_ container: NSView, context: Context) {
-        // Keep the resize callback current (SwiftUI hands us a fresh closure each pass).
+        // Keep the callbacks current (SwiftUI hands us fresh closures each pass).
         context.coordinator.onResize = onContainerResize
+        context.coordinator.onResync = onResync
 
         let current = container.subviews.first as? TerminalView
         let target = session?.terminalView
@@ -269,9 +343,17 @@ struct TerminalHostView: NSViewRepresentable {
         /// on it when swapping (the outgoing view's owning session isn't always
         /// the new `session` value).
         var mountedSession: TerminalSession?
+        /// The hosted container view, so the sleep/wake + screen observers can read its
+        /// real bounds at fire time. Weak — AppKit owns it.
+        weak var container: NSView?
         /// Latest resize callback (refreshed each `updateNSView`).
         var onResize: ((CGSize) -> Void)?
+        /// Latest resync callback (refreshed each `updateNSView`).
+        var onResync: ((CGSize) -> Void)?
         /// Token for the container's frame-change observer, removed on dismantle.
         var frameObserver: NSObjectProtocol?
+        /// Tokens for the sleep/wake + screen-reconfiguration observers.
+        var wakeObserver: NSObjectProtocol?
+        var screenObserver: NSObjectProtocol?
     }
 }
