@@ -61,6 +61,30 @@ osascript -e 'tell application "ConsoleForge" to quit' 2>/dev/null || true
 echo "Swapping binary into $APP_BUNDLE..."
 cp ".build/$CONFIG/ConsoleForge" "$APP_BUNDLE/Contents/MacOS/ConsoleForge"
 
+# The binary now links @rpath/Sparkle.framework (resolved via the
+# @executable_path/../Frameworks rpath baked in by Package.swift). A bundle
+# installed before Sparkle was added lacks the framework, so the hot-swapped
+# binary would crash on launch. Embed + sign it if it's missing (a full
+# ./scripts/build.sh install keeps it current thereafter).
+FW="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+if [ ! -d "$FW" ]; then
+    echo "Embedding Sparkle.framework (missing from installed bundle)..."
+    SPARKLE_FW="$(find "$PROJECT_DIR/.build/artifacts" \
+        -type d -path '*Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework' 2>/dev/null | head -1)"
+    if [ -z "$SPARKLE_FW" ]; then
+        echo "ERROR: Sparkle.framework not found in .build/artifacts." >&2
+        exit 1
+    fi
+    mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+    cp -R "$SPARKLE_FW" "$FW"
+    for comp in \
+        "XPCServices/Downloader.xpc" "XPCServices/Installer.xpc" \
+        "Autoupdate" "Updater.app" "."; do
+        codesign --force --options runtime --preserve-metadata=entitlements \
+            --sign "$SIGN_IDENTITY" "$FW/Versions/B/$comp"
+    done
+fi
+
 echo "Re-signing with: $SIGN_IDENTITY"
 codesign --force --options runtime \
     --entitlements "$ENTITLEMENTS" \

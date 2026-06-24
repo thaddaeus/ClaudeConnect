@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Sparkle
 
 /// Ensures the app runs as a proper GUI application with dock icon and keyboard focus,
 /// even when launched via `swift run` (which starts as a CLI process).
@@ -130,12 +131,18 @@ struct ConsoleForgeApp: App {
     @State private var store = SessionStore()
     @State private var activityTracker = TabActivityTracker()
     @State private var commandWatcher = CommandWatcher()
-    @State private var updateChecker = UpdateChecker()
     @State private var companionSettings: CompanionSettings
     @State private var companionService: CompanionService
     @State private var companionAuth: CompanionAuth
     @State private var supportReporter: SupportReporter
     @State private var showFDAPrompt = false
+
+    /// Sparkle updater. Held as a plain `let` (must outlive view churn, not @State).
+    /// `startingUpdater: true` starts scheduled background checks immediately;
+    /// cadence/automatic-check policy comes from Info.plist (SUScheduledCheckInterval,
+    /// SUEnableAutomaticChecks).
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     init() {
         // CompanionService + CompanionAuth + SupportReporter must share the same
@@ -153,7 +160,6 @@ struct ConsoleForgeApp: App {
             ContentView()
                 .environment(store)
                 .environment(activityTracker)
-                .environment(updateChecker)
                 .environment(companionSettings)
                 .environment(companionService)
                 .environment(companionAuth)
@@ -163,7 +169,6 @@ struct ConsoleForgeApp: App {
                         handleCommand(command)
                     }
                     commandWatcher.start()
-                    updateChecker.checkForUpdates()
                     TabEventWriter.cleanupStaleEvents()
 
                     // Forward tab activity transitions to the companion poster,
@@ -210,6 +215,11 @@ struct ConsoleForgeApp: App {
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1200, height: 800)
         .commands {
+            // "Check for Updates…" under the app menu, right after the About item.
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: updaterController.updater)
+            }
+
             CommandGroup(replacing: .newItem) {
                 Button("New Session") {
                     let session = store.addSession()

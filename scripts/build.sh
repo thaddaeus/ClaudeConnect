@@ -85,6 +85,20 @@ cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$SCRIPT_DIR/consoleforge-tab" "$APP_BUNDLE/Contents/Resources/consoleforge-tab"
 cp "$PROJECT_DIR/ConsoleForge/Assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
+# Embed Sparkle.framework. The binary links @rpath/Sparkle.framework/... and
+# Package.swift adds an @executable_path/../Frameworks rpath, so the framework
+# must live in Contents/Frameworks. Locate the universal framework in the SPM
+# binary artifact (path includes the resolved Sparkle version, so glob it).
+mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+SPARKLE_FW="$(find "$PROJECT_DIR/.build/artifacts" \
+    -type d -path '*Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework' 2>/dev/null | head -1)"
+if [ -z "$SPARKLE_FW" ] || [ ! -d "$SPARKLE_FW" ]; then
+    echo "Error: Sparkle.framework not found in .build/artifacts. Run 'swift build' first."
+    exit 1
+fi
+# -R preserves the framework's Versions/Current symlinks (required for a valid bundle).
+cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+
 cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -112,6 +126,18 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- Sparkle auto-update. SUFeedURL uses GitHub's stable "latest release"
+         redirect; build.sh uploads appcast.xml as an asset to each release.
+         SUPublicEDKey verifies EdDSA update signatures (private key in login
+         Keychain; mirror at Keychain service consoleforge-sparkle-eddsa-private). -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/thaddaeus/ConsoleForge/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>/3v2ks6+VzrqIVIYKvWB3ROPdQjdGmWCNDFkqWiJluM=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
     <key>NSSupportsAutomaticTermination</key>
     <false/>
     <key>NSSupportsSuddenTermination</key>
@@ -152,14 +178,40 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 PLIST
 
 # ── Step 3: Code sign (hardened runtime + timestamp + entitlements) ──
+# Sparkle's nested helpers/XPC services must be signed inner-to-outer, each with
+# the hardened runtime. NEVER use `codesign --deep` here — it corrupts the XPC
+# service signatures and notarization/launch fails. (--deep verification below is
+# fine; only --deep *signing* is the problem.)
 echo ""
-echo "Signing with Developer ID..."
-codesign --deep --force --options runtime --timestamp \
+echo "Signing Sparkle components..."
+FW="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+
+# XPC services first. --preserve-metadata=entitlements keeps Sparkle's shipped
+# entitlements (required for Sparkle 2.6+ Downloader/Installer behavior).
+codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
+    --sign "$SIGN_IDENTITY" "$FW/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
+    --sign "$SIGN_IDENTITY" "$FW/Versions/B/XPCServices/Installer.xpc"
+
+# Helper tool + updater UI app.
+codesign --force --options runtime --timestamp \
+    --sign "$SIGN_IDENTITY" "$FW/Versions/B/Autoupdate"
+codesign --force --options runtime --timestamp \
+    --sign "$SIGN_IDENTITY" "$FW/Versions/B/Updater.app"
+
+# The framework itself (signs the versioned bundle).
+codesign --force --options runtime --timestamp \
+    --sign "$SIGN_IDENTITY" "$FW"
+
+echo "Signing app with Developer ID..."
+# Finally the outer app — NO --deep (components are already signed above).
+codesign --force --options runtime --timestamp \
     --entitlements "$ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" \
     "$APP_BUNDLE"
 
-# Verify
+# Verify (deep verification is legitimate — it confirms the nested components
+# above are correctly signed).
 codesign --verify --deep --strict "$APP_BUNDLE"
 echo "Signature verified."
 
@@ -233,4 +285,36 @@ if [ "$DO_RELEASE" = true ]; then
         --notes "$RELEASE_NOTES"
 
     echo "GitHub release published."
+
+    # ── Step 7: Sparkle appcast ──
+    # Generate + EdDSA-sign appcast.xml from this release's DMG and upload it as
+    # an asset. SUFeedURL points at the stable .../releases/latest/download/appcast.xml
+    # redirect, so each release's appcast supersedes the previous one. The DMG
+    # enclosure URL is built from this release's download dir. generate_appcast
+    # reads the EdDSA private key from the login Keychain automatically.
+    echo ""
+    echo "Generating Sparkle appcast..."
+    GENERATE_APPCAST="$(find "$PROJECT_DIR/.build/artifacts" \
+        -type f -path '*Sparkle/bin/generate_appcast' 2>/dev/null | head -1)"
+    if [ -z "$GENERATE_APPCAST" ]; then
+        echo "ERROR: generate_appcast not found in .build/artifacts."
+        exit 1
+    fi
+
+    APPCAST_DIR="$BUILD_DIR/appcast"
+    rm -rf "$APPCAST_DIR"
+    mkdir -p "$APPCAST_DIR"
+    cp "$DMG_PATH" "$APPCAST_DIR/"
+
+    "$GENERATE_APPCAST" \
+        --download-url-prefix "https://github.com/thaddaeus/ConsoleForge/releases/download/v$VERSION/" \
+        "$APPCAST_DIR"
+
+    if [ ! -f "$APPCAST_DIR/appcast.xml" ]; then
+        echo "ERROR: appcast.xml was not generated."
+        exit 1
+    fi
+
+    gh release upload "v$VERSION" "$APPCAST_DIR/appcast.xml" --clobber
+    echo "Appcast published — auto-update feed is live."
 fi
