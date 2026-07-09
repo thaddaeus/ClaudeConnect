@@ -3,18 +3,41 @@ import AuthenticationServices
 import Foundation
 import Observation
 
-/// Keychain account names shared between the auth service (writes) and the
-/// companion poster (reads the device token).
+/// Keychain account names written by the auth service on sign-in. The `companion.`
+/// prefix is a live account name in users' Keychains — renaming it would orphan the
+/// stored tokens and silently sign everyone out.
 enum CompanionKeychain {
     static let deviceToken = "companion.deviceToken"
     static let sessionToken = "companion.sessionToken"
 }
 
-/// Drives GitHub sign-in for the companion (spec §7). Runs the OAuth flow via
+/// Errors surfaced to the account + support UI (sign-in / backend failures).
+enum CompanionError: LocalizedError {
+    case noRelayURL
+    case relayStatus(Int)
+    case badResponse
+    case notSignedIn
+    case supportUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .noRelayURL: "No backend URL configured."
+        case .relayStatus(let code): "Backend returned HTTP \(code)."
+        case .badResponse: "Unexpected response from the backend."
+        case .notSignedIn: "Sign in with GitHub first."
+        case .supportUnavailable: "Support isn’t available yet — please try again later."
+        }
+    }
+}
+
+/// Drives GitHub sign-in (spec §7). Runs the OAuth flow via
 /// ASWebAuthenticationSession; the Worker performs the code→token exchange and
 /// redirects back to `consoleforge://auth/callback#device=…&session=…&login=…`.
-/// We store the login-minted device + session tokens in the Keychain — the
-/// poster authenticates with the long-lived device token, never the OAuth token.
+/// We store the login-minted device + session tokens in the Keychain; support
+/// requests authenticate with the session token, never the OAuth token.
+///
+/// Sign-in exists solely to attribute support requests to a GitHub identity —
+/// ConsoleForge itself never requires an account.
 @MainActor
 @Observable
 final class CompanionAuth: NSObject, ASWebAuthenticationPresentationContextProviding {

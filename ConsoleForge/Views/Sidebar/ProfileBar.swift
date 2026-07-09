@@ -4,15 +4,13 @@ import AuthenticationServices
 
 /// Pinned to the bottom of the sidebar. Signed out it's a "Sign in with GitHub"
 /// pill that kicks off the OAuth flow; signed in it shows the GitHub avatar +
-/// @username and opens a menu (Companion Settings…, open on phone, sign out).
+/// @username and opens a menu (Account Settings…, sign out).
 ///
-/// This is the discoverable home for companion sign-in — the same flow also
-/// lives in Settings → Companion, but nobody goes looking there for it.
+/// This is the discoverable home for sign-in — the same flow also lives in
+/// Settings → Account, but nobody goes looking there for it.
 struct ProfileBar: View {
     @Environment(CompanionAuth.self) private var auth
-    @Environment(CompanionService.self) private var service
-    @Environment(CompanionSettings.self) private var settings
-    // Companion settings live in their OWN plain Window, not the macOS Settings
+    // Account settings live in their OWN plain Window, not the macOS Settings
     // scene. Every route into the Settings scene from a Menu is swallowed by
     // SwiftUI: `showSettingsWindow:` was removed in Sonoma, and both
     // `SettingsLink` and `openSettings()` silently no-op when invoked from a
@@ -43,22 +41,15 @@ struct ProfileBar: View {
     private var signedInChip: some View {
         Menu {
             Button {
-                openCompanionSettings()
+                openAccountSettings()
             } label: {
-                Label("Companion Settings…", systemImage: "gearshape")
-            }
-
-            if let url = URL(string: settings.relayBaseURL) {
-                Link(destination: url) {
-                    Label("Open companion on phone", systemImage: "iphone.gen3")
-                }
+                Label("Account Settings…", systemImage: "gearshape")
             }
 
             Divider()
 
             Button(role: .destructive) {
                 auth.signOut()
-                service.reset()
             } label: {
                 Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
             }
@@ -69,7 +60,7 @@ struct ProfileBar: View {
                     Text(auth.login.map { "@\($0)" } ?? "GitHub")
                         .font(.callout).fontWeight(.medium)
                         .lineLimit(1)
-                    Text("Companion connected")
+                    Text("Signed in")
                         .font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -84,13 +75,13 @@ struct ProfileBar: View {
         .menuIndicator(.hidden)
     }
 
-    /// Open the dedicated Companion settings window. `openWindow(id:)` works
+    /// Open the dedicated Account settings window. `openWindow(id:)` works
     /// reliably from a Menu action, unlike anything that targets the Settings
     /// scene. `activate` brings the app forward in case the menu was triggered
     /// while another app held focus.
-    private func openCompanionSettings() {
+    private func openAccountSettings() {
         NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "companion-settings")
+        openWindow(id: "account-settings")
     }
 
     @ViewBuilder
@@ -131,7 +122,7 @@ struct ProfileBar: View {
         }
         .buttonStyle(.plain)
         .disabled(isSigningIn)
-        .help("Sign in to enable phone alerts. ConsoleForge itself never requires an account.")
+        .help("Sign in to file bug reports and feature requests from inside the app. ConsoleForge itself never requires an account.")
     }
 
     private func signIn() async {
@@ -142,7 +133,7 @@ struct ProfileBar: View {
         } catch let err as ASWebAuthenticationSessionError where err.code == .canceledLogin {
             // User dismissed the sheet — not an error worth surfacing.
         } catch {
-            // Surface detail in Settings → Companion; keep the sidebar quiet.
+            // Surface detail in Settings → Account; keep the sidebar quiet.
             NSSound.beep()
         }
     }

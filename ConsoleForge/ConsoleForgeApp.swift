@@ -132,7 +132,6 @@ struct ConsoleForgeApp: App {
     @State private var activityTracker = TabActivityTracker()
     @State private var commandWatcher = CommandWatcher()
     @State private var companionSettings: CompanionSettings
-    @State private var companionService: CompanionService
     @State private var companionAuth: CompanionAuth
     @State private var supportReporter: SupportReporter
     @State private var showFDAPrompt = false
@@ -145,12 +144,11 @@ struct ConsoleForgeApp: App {
         startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     init() {
-        // CompanionService + CompanionAuth + SupportReporter must share the same
-        // CompanionSettings instance the UI binds to, so settings (relay URL, login)
-        // changes are seen everywhere.
+        // CompanionAuth + SupportReporter must share the same CompanionSettings
+        // instance the UI binds to, so settings (backend URL, login) changes are
+        // seen everywhere.
         let settings = CompanionSettings()
         _companionSettings = State(initialValue: settings)
-        _companionService = State(initialValue: CompanionService(settings: settings))
         _companionAuth = State(initialValue: CompanionAuth(settings: settings))
         _supportReporter = State(initialValue: SupportReporter(settings: settings))
     }
@@ -160,8 +158,6 @@ struct ConsoleForgeApp: App {
             ContentView()
                 .environment(store)
                 .environment(activityTracker)
-                .environment(companionSettings)
-                .environment(companionService)
                 .environment(companionAuth)
                 .environment(supportReporter)
                 .task {
@@ -171,24 +167,9 @@ struct ConsoleForgeApp: App {
                     commandWatcher.start()
                     TabEventWriter.cleanupStaleEvents()
 
-                    // Forward tab activity transitions to the companion poster,
-                    // enriching each signal with the tab's metadata from the store.
-                    // emit() always fires on the main thread, so assuming main-actor
-                    // isolation here is safe and lets us call the @MainActor service.
-                    activityTracker.settleSeconds = companionSettings.settleSeconds
-                    activityTracker.onCompanionEvent = { signal in
-                        MainActor.assumeIsolated {
-                            companionService.report(
-                                signal,
-                                config: store.session(for: signal.tabId),
-                                openTabIds: store.openTabIDs.map(\.uuidString)
-                            )
-                        }
-                    }
-
                     // Every close path funnels through store.closeTab; clean up the
-                    // tracker (which emits `.closed` to the companion) from here so
-                    // UI, menu, and CLI closes are all covered by one wire.
+                    // tracker from here so UI, menu, and CLI closes are all covered
+                    // by one wire.
                     store.onTabClosed = { tabID in
                         activityTracker.removeTab(tabID: tabID)
                     }
@@ -206,9 +187,6 @@ struct ConsoleForgeApp: App {
                         UserDefaults.standard.set(true, forKey: "fdaPromptDismissed")
                         showFDAPrompt = false
                     }
-                }
-                .onChange(of: companionSettings.settleSeconds) { _, newValue in
-                    activityTracker.settleSeconds = newValue
                 }
         }
         .windowStyle(.titleBar)
@@ -272,8 +250,6 @@ struct ConsoleForgeApp: App {
 
         Settings {
             SettingsView()
-                .environment(companionSettings)
-                .environment(companionService)
                 .environment(companionAuth)
         }
 
@@ -285,26 +261,23 @@ struct ConsoleForgeApp: App {
         .defaultSize(width: 520, height: 700)
         .windowResizability(.contentSize)
 
-        // Companion settings as a plain window — opening the macOS Settings
+        // Account settings as a plain window — opening the macOS Settings
         // scene from the profile Menu is unreliable (SwiftUI swallows it). This
         // is opened via `openWindow(id:)` from ProfileBar.
-        Window("Companion Settings", id: "companion-settings") {
-            CompanionSettingsView()
-                .frame(width: 540, height: 560)
-                .environment(companionSettings)
-                .environment(companionService)
+        Window("Account Settings", id: "account-settings") {
+            AccountSettingsView()
+                .frame(width: 540, height: 420)
                 .environment(companionAuth)
         }
         .windowStyle(.titleBar)
-        .defaultSize(width: 540, height: 560)
+        .defaultSize(width: 540, height: 420)
         .windowResizability(.contentSize)
 
         // Support window (Help → Report a Bug / Get Help / My Requests). A plain
         // Window opened via `openWindow(id:)` from the Help menu — same reliable
-        // route as Companion Settings.
+        // route as Account Settings.
         Window("Support", id: "support") {
             SupportView()
-                .environment(companionSettings)
                 .environment(companionAuth)
                 .environment(supportReporter)
         }

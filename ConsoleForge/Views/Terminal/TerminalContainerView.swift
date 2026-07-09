@@ -141,7 +141,7 @@ struct TerminalContainerView: View {
 
     private func handleTermination(id: UUID, exitCode: Int32?) {
         tabStates[id] = .terminated(exitCode)
-        activityTracker.didTerminate(tabID: id, exitCode: exitCode)
+        activityTracker.didTerminate(tabID: id)
         // Only emit process-exit if the tab is still open (not already closed by
         // user or self-close, which would have emitted their own event).
         if store.openTabIDs.contains(id) {

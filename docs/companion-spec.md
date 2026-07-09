@@ -1,11 +1,30 @@
 # ConsoleForge Companion — Design Spec
 
+> **⚠️ The phone companion is RETIRED (2026-07-09).** Claude Code ships Remote
+> Control (`/rc` in a session, or `claude --rc`) with mobile push notifications,
+> which supersedes the status board and Web Push alerts described here — and goes
+> further, letting you answer a blocked session rather than only observe it.
+>
+> **Retired:** §5 events (`/v1/events`), §6 push/alerts, the status board, and the
+> transcript content reader. `CompanionService`, `CompanionEvent`, and
+> `TranscriptReader` are deleted from the macOS app.
+>
+> **Still live:** §7 GitHub sign-in (`/v1/auth/*`) and §8 support intake
+> (`/v1/support*`). Sign-in now exists solely to attribute support requests to a
+> GitHub identity. The Cloudflare Worker stays deployed to serve those two.
+>
+> Known gap: Remote Control requires a Claude Pro/Max/Team/Enterprise plan and a
+> claude.ai OAuth login. Users on API-key auth, Bedrock, or Vertex have no phone
+> status surface at all after this change.
+>
+> Sections below are preserved as the historical contract. Read §7–§8 as current;
+> read everything else as retired.
+
 A phone companion for ConsoleForge that shows live tab status and pushes alerts
 when a tab finishes a turn, goes quiet, or exits — even when you're away from your
 Mac and the companion app is closed.
 
-Status: **design** (no code yet). This document is the contract; implementation
-follows it.
+Status: **retired** — see the banner above.
 
 ---
 

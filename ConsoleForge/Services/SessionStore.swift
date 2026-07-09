@@ -18,7 +18,7 @@ class SessionStore {
     var editingSessionID: UUID?
     /// Notified (with the closed tab's id) after any tab is closed, from the single
     /// `closeTab` chokepoint — so every close path (UI, menu, CLI) cleans up the
-    /// activity tracker and informs the companion. Set by the app.
+    /// activity tracker. Set by the app.
     @ObservationIgnored var onTabClosed: ((UUID) -> Void)?
     /// IDs of ephemeral sessions that were restored from a previous run.
     /// These get `--continue` to resume the Claude session.
@@ -268,7 +268,7 @@ class SessionStore {
         }
         save()
         // openTabIDs is now up to date — notify after removal so listeners see the
-        // post-close state (e.g. the companion sends the reduced open-tab set).
+        // post-close state.
         onTabClosed?(sessionID)
     }
 
