@@ -167,6 +167,14 @@ struct ConsoleForgeApp: App {
                     commandWatcher.start()
                     TabEventWriter.cleanupStaleEvents()
 
+                    // Lets a bell be checked against that session's transcript, so the
+                    // amber "needs input" dot only lights when something is genuinely
+                    // pending. The tracker takes the lookup as a closure rather than a
+                    // SessionStore dependency.
+                    activityTracker.workingDirectory = { tabID in
+                        store.session(for: tabID)?.workingDirectory
+                    }
+
                     // Every close path funnels through store.closeTab; clean up the
                     // tracker from here so UI, menu, and CLI closes are all covered
                     // by one wire.

@@ -7,18 +7,41 @@ class TabActivityTracker {
     /// Per-tab activity state
     private(set) var activities: [UUID: TabActivity] = [:]
 
-    /// Tabs that have received a bell since the user last viewed them
-    private var bellTabs: Set<UUID> = []
-
-    /// Tabs that have received output since the user last viewed them
-    private var unreadTabs: Set<UUID> = []
-
     /// How long a background tab must be quiet (no new output) before its dot flips
     /// from working (green) to settled (gray). 0 disables the transition.
     @ObservationIgnored var settleSeconds: Double = 3
 
+    /// Resolves a tab's working directory, so a bell can be checked against that
+    /// session's transcript. Set by the app; the tracker stays free of a `SessionStore`
+    /// dependency. When this is nil, or returns nil, a bell falls back to the old
+    /// always-alert behaviour rather than silently going quiet.
+    @ObservationIgnored var workingDirectory: ((UUID) -> String?)?
+
     /// Per-tab debounce timers for the `settled` trigger.
     @ObservationIgnored private var settleTimers: [UUID: DispatchWorkItem] = [:]
+
+    /// Per-tab probe counter. Bumped whenever a tab's state is decided by something
+    /// more authoritative than an in-flight probe (focus, exit, close, a newer bell),
+    /// so a slow transcript read can't land late and stomp it.
+    @ObservationIgnored private var probeGeneration: [UUID: Int] = [:]
+
+    /// Claude writes the assistant record that contains a pending `tool_use` to the
+    /// transcript a beat *after* the tool starts — measured at ~115ms. Probing the
+    /// instant the bell arrives can therefore read a transcript that hasn't caught up,
+    /// see nothing pending, and gray out a live permission prompt. Wait first.
+    @ObservationIgnored private let bellProbeDelay: TimeInterval = 0.4
+
+    /// Before clearing the amber dot we re-read once more. A false "pending" merely
+    /// leaves the dot amber a moment longer; a false "clear" silently drops an alert
+    /// the user is waiting on. Only the second failure mode is worth guarding.
+    @ObservationIgnored private let clearConfirmDelay: TimeInterval = 0.6
+
+    /// Floor on how often a belled tab re-reads its transcript while output streams.
+    /// Output arrives per chunk; the transcript is a file read.
+    @ObservationIgnored private let reprobeThrottle: TimeInterval = 1.0
+
+    /// When each tab last kicked a probe, for `reprobeThrottle`.
+    @ObservationIgnored private var lastProbeAt: [UUID: Date] = [:]
 
     func activity(for tabID: UUID) -> TabActivity {
         activities[tabID] ?? .idle
@@ -27,9 +50,16 @@ class TabActivityTracker {
     /// Called when terminal output is received on a tab
     func didReceiveOutput(tabID: UUID, isActive: Bool) {
         if !isActive {
-            unreadTabs.insert(tabID)
-            // Don't override bell state with mere output
-            if activities[tabID] != .bell {
+            if activities[tabID] == .bell {
+                // Never let raw output clear a pending prompt — while Claude waits it
+                // still repaints its spinner and status line, which is exactly why the
+                // old code refused to budge here. But once the prompt is answered,
+                // Claude can stream for minutes and the settle timer never fires, so
+                // the amber dot would sit there through a whole turn of real work.
+                // Ask the transcript instead of the bytes, at a rate a file read can
+                // stand.
+                reprobeWhileBelled(tabID)
+            } else {
                 setState(.output, for: tabID)
             }
             // Each output chunk on a background tab restarts the settle timer; when it
@@ -38,25 +68,29 @@ class TabActivityTracker {
         } else {
             // The focused tab is being watched — never settle-alert it.
             cancelSettleTimer(for: tabID)
+            invalidateProbe(for: tabID)
             setState(.active, for: tabID)
         }
     }
 
-    /// Called when a bell character is received on a tab
+    /// Called when a bell character is received on a tab.
+    ///
+    /// Claude Code rings the bell at the end of *every* turn, so a bell by itself
+    /// says only "a turn boundary happened" — not "I need you." Asking the transcript
+    /// whether the session is actually blocked is what separates the two. Until the
+    /// answer arrives the dot keeps whatever it had, so a plain turn-end bell never
+    /// flashes amber on its way to gray.
     func didReceiveBell(tabID: UUID, isActive: Bool) {
-        if !isActive {
-            bellTabs.insert(tabID)
-            activities[tabID] = .bell
-            // A bell is itself the attention signal; don't also settle it.
-            cancelSettleTimer(for: tabID)
-        }
+        guard !isActive else { return }
+        // A bell is a turn boundary; the settle timer is about to be redundant.
+        cancelSettleTimer(for: tabID)
+        schedulePromptProbe(for: tabID, after: bellProbeDelay)
     }
 
     /// Called when the user switches to a tab — clears its indicators
     func didFocusTab(tabID: UUID) {
-        bellTabs.remove(tabID)
-        unreadTabs.remove(tabID)
         cancelSettleTimer(for: tabID)
+        invalidateProbe(for: tabID)
         // A dead process stays .exited (red dot) — focusing can't revive it.
         guard activities[tabID] != .exited else { return }
         setState(.active, for: tabID)
@@ -65,6 +99,7 @@ class TabActivityTracker {
     /// Called when a tab's process terminates
     func didTerminate(tabID: UUID) {
         cancelSettleTimer(for: tabID)
+        invalidateProbe(for: tabID)
         activities[tabID] = .exited
     }
 
@@ -72,9 +107,88 @@ class TabActivityTracker {
     /// where the tab stays open showing a dead process.
     func removeTab(tabID: UUID) {
         cancelSettleTimer(for: tabID)
+        invalidateProbe(for: tabID)
         activities.removeValue(forKey: tabID)
-        bellTabs.remove(tabID)
-        unreadTabs.remove(tabID)
+        probeGeneration.removeValue(forKey: tabID)
+        lastProbeAt.removeValue(forKey: tabID)
+    }
+
+    // MARK: - Pending-prompt probe
+
+    /// Re-read the transcript for a belled tab that is streaming output again, no more
+    /// than once per `reprobeThrottle`. If the prompt has been answered the probe
+    /// clears the dot; the next output chunk then paints it green (working).
+    private func reprobeWhileBelled(_ tabID: UUID) {
+        let now = Date()
+        if let last = lastProbeAt[tabID], now.timeIntervalSince(last) < reprobeThrottle { return }
+        schedulePromptProbe(for: tabID, after: 0)
+    }
+
+    /// Ask the session's transcript whether it is blocked on the user, and set the dot
+    /// from the answer: amber only when something is genuinely pending.
+    ///
+    /// Reading the transcript is file IO, so it runs off the main thread and the result
+    /// is applied back on main. A generation check discards the answer if the tab was
+    /// focused, closed, or belled again while the read was in flight.
+    ///
+    /// `confirmationsLeft` guards the one-way door: a probe that says "nothing pending"
+    /// re-reads once before it is allowed to clear the dot.
+    private func schedulePromptProbe(for tabID: UUID, after delay: TimeInterval, confirmationsLeft: Int = 1) {
+        // Bump first: this supersedes any probe already scheduled or in flight.
+        let generation = bumpProbe(for: tabID)
+        lastProbeAt[tabID] = Date()
+
+        guard let cwd = workingDirectory?(tabID), !cwd.isEmpty else {
+            // No working directory to inspect — can't tell, so assume it wants us.
+            applyProbe(nil, to: tabID, confirmationsLeft: 0)
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.probeGeneration[tabID] == generation else { return }
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let awaiting = PendingPromptProbe.isAwaitingUser(workingDirectory: cwd)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.probeGeneration[tabID] == generation else { return }
+                    self.applyProbe(awaiting, to: tabID, confirmationsLeft: confirmationsLeft)
+                }
+            }
+        }
+    }
+
+    /// `nil` means the probe couldn't tell (no transcript, unreadable). Treat that as
+    /// needing attention — a missed alert is worse than a stale one.
+    ///
+    /// No check for a missing tab: focus, exit, and close all bump the generation, so
+    /// a probe that reaches here is for a tab that still wants a dot — including one
+    /// whose first-ever event was this bell.
+    private func applyProbe(_ awaiting: Bool?, to tabID: UUID, confirmationsLeft: Int) {
+        guard activities[tabID] != .exited else { return }
+
+        guard let awaiting else {
+            activities[tabID] = .bell   // couldn't tell
+            return
+        }
+        if awaiting {
+            activities[tabID] = .bell
+        } else if confirmationsLeft > 0 {
+            // Don't clear on a single read — the transcript may just be lagging.
+            schedulePromptProbe(for: tabID, after: clearConfirmDelay, confirmationsLeft: 0)
+        } else {
+            activities[tabID] = .settled
+        }
+    }
+
+    @discardableResult
+    private func bumpProbe(for tabID: UUID) -> Int {
+        let next = (probeGeneration[tabID] ?? 0) + 1
+        probeGeneration[tabID] = next
+        return next
+    }
+
+    /// Abandon any in-flight probe for this tab.
+    private func invalidateProbe(for tabID: UUID) {
+        bumpProbe(for: tabID)
     }
 
     // MARK: - State plumbing
@@ -90,9 +204,18 @@ class TabActivityTracker {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.settleTimers[tabID] = nil
-            // The turn finished — flip the dot from working to settled.
-            if self.activities[tabID] == .output {
+            switch self.activities[tabID] {
+            case .output:
+                // The turn finished — flip the dot from working to settled.
                 self.activities[tabID] = .settled
+            case .bell:
+                // The tab was belled, then went quiet again. If the prompt has since
+                // been answered — from the terminal, or remotely via Claude Code's
+                // `/rc` — nothing is pending any more and the amber dot is stale.
+                // Quiet already, so no need to wait out the transcript's write lag.
+                self.schedulePromptProbe(for: tabID, after: 0)
+            default:
+                break
             }
         }
         settleTimers[tabID] = work
