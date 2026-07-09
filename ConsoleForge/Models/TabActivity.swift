@@ -13,13 +13,8 @@ class TabActivityTracker {
     /// Tabs that have received output since the user last viewed them
     private var unreadTabs: Set<UUID> = []
 
-    /// Optional sink for companion events. Set by the app to forward transitions to
-    /// `CompanionService` without the tracker taking a hard dependency on networking
-    /// or the session store (the wiring layer enriches signals with tab metadata).
-    @ObservationIgnored var onCompanionEvent: ((CompanionSignal) -> Void)?
-
-    /// How long a background tab must be quiet (no new output) before it emits a
-    /// `settled` event. Mirrors `CompanionSettings.settleSeconds`; 0 disables it.
+    /// How long a background tab must be quiet (no new output) before its dot flips
+    /// from working (green) to settled (gray). 0 disables the transition.
     @ObservationIgnored var settleSeconds: Double = 3
 
     /// Per-tab debounce timers for the `settled` trigger.
@@ -52,11 +47,8 @@ class TabActivityTracker {
         if !isActive {
             bellTabs.insert(tabID)
             activities[tabID] = .bell
-            // A bell is itself the attention signal; don't also settle-alert.
+            // A bell is itself the attention signal; don't also settle it.
             cancelSettleTimer(for: tabID)
-            // Emit unconditionally (not via setState) — each bell is a fresh turn-end
-            // and should push, even if the tab was already in .bell.
-            emit(tabID, .bell)
         }
     }
 
@@ -65,46 +57,31 @@ class TabActivityTracker {
         bellTabs.remove(tabID)
         unreadTabs.remove(tabID)
         cancelSettleTimer(for: tabID)
-        // A dead process stays .exited (red dot) — focusing can't revive it. The
-        // companion still hears about the focus for its board refresh.
-        if activities[tabID] == .exited {
-            emit(tabID, .active)
-            return
-        }
+        // A dead process stays .exited (red dot) — focusing can't revive it.
+        guard activities[tabID] != .exited else { return }
         setState(.active, for: tabID)
     }
 
     /// Called when a tab's process terminates
-    func didTerminate(tabID: UUID, exitCode: Int32? = nil) {
+    func didTerminate(tabID: UUID) {
         cancelSettleTimer(for: tabID)
         activities[tabID] = .exited
-        emit(tabID, .exited, exitCode: exitCode)
     }
 
-    /// Called when a tab is closed. Emits `.closed` so the companion drops the tab
-    /// from its snapshot (the tab no longer exists, unlike `.exited` where the tab
-    /// stays open showing a dead process).
+    /// Called when a tab is closed — the tab no longer exists, unlike `.exited`
+    /// where the tab stays open showing a dead process.
     func removeTab(tabID: UUID) {
         cancelSettleTimer(for: tabID)
         activities.removeValue(forKey: tabID)
         bellTabs.remove(tabID)
         unreadTabs.remove(tabID)
-        emit(tabID, .closed)
     }
 
-    // MARK: - Companion event plumbing
+    // MARK: - State plumbing
 
-    /// Updates a tab's activity state and emits a snapshot companion event only when
-    /// the state actually changes — output arrives per-chunk, so emitting on every
-    /// chunk would be a firehose. The settle timer still restarts on every chunk.
     private func setState(_ newState: TabActivity, for tabID: UUID) {
         guard activities[tabID] != newState else { return }
         activities[tabID] = newState
-        emit(tabID, newState.companionState)
-    }
-
-    private func emit(_ tabID: UUID, _ state: CompanionState, exitCode: Int32? = nil) {
-        onCompanionEvent?(CompanionSignal(tabId: tabID, state: state, exitCode: exitCode))
     }
 
     private func restartSettleTimer(for tabID: UUID) {
@@ -113,12 +90,10 @@ class TabActivityTracker {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.settleTimers[tabID] = nil
-            // The turn finished — flip the dot from working to settled. Direct set,
-            // not setState: the .settled emit below already covers the companion.
+            // The turn finished — flip the dot from working to settled.
             if self.activities[tabID] == .output {
                 self.activities[tabID] = .settled
             }
-            self.emit(tabID, .settled)
         }
         settleTimers[tabID] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + settleSeconds, execute: work)
@@ -174,18 +149,6 @@ enum TabActivity {
         switch self {
         case .bell: .yellow
         case .idle, .active, .output, .settled, .exited: nil
-        }
-    }
-
-    /// The companion-event equivalent of this UI activity state.
-    var companionState: CompanionState {
-        switch self {
-        case .idle: .idle
-        case .active: .active
-        case .output: .output
-        case .settled: .settled
-        case .bell: .bell
-        case .exited: .exited
         }
     }
 }
