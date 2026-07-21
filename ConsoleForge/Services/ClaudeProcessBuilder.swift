@@ -87,6 +87,25 @@ struct ClaudeProcessBuilder {
         }
         var parts: [String] = [claudeBinary]
 
+        // Parse additional flags up front so an explicit user flag can win over
+        // anything we'd otherwise add automatically (see --name below).
+        let extraFlags = config.additionalFlags
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        // Give Claude the tab's name so the two agree: it shows in the prompt box,
+        // the /resume picker, and the terminal title instead of an auto-generated
+        // summary. Purely a display label — the session is still keyed by
+        // --session-id. Skipped if the user set their own name in additionalFlags.
+        let userNamedSession = extraFlags.contains {
+            $0 == "--name" || $0 == "-n" || $0.hasPrefix("--name=") || $0.hasPrefix("-n=")
+        }
+        let sessionName = config.name.trimmingCharacters(in: .whitespaces)
+        if !sessionName.isEmpty, !userNamedSession {
+            parts.append(contentsOf: ["--name", shellQuote(sessionName)])
+        }
+
         if let model = config.model, !model.isEmpty {
             parts.append(contentsOf: ["--model", shellQuote(model)])
         }
@@ -147,11 +166,7 @@ struct ClaudeProcessBuilder {
             parts.append(contentsOf: ["--session-id", sid.uuidString])
         }
 
-        // Parse additional flags
-        let extraFlags = config.additionalFlags
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        // Additional flags (parsed above)
         parts.append(contentsOf: extraFlags)
 
         // Initial prompt as positional argument (no -p flag, which would make it non-interactive)
