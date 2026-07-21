@@ -98,8 +98,11 @@ struct ClaudeProcessBuilder {
         // the /resume picker, and the terminal title instead of an auto-generated
         // summary. Purely a display label — the session is still keyed by
         // --session-id. Skipped if the user set their own name in additionalFlags.
-        let userNamedSession = extraFlags.contains {
-            $0 == "--name" || $0 == "-n" || $0.hasPrefix("--name=") || $0.hasPrefix("-n=")
+        // Match on the leading token so a one-line "--name Foo" counts too, not
+        // just the flag-per-line form the consoleforge-tab CLI writes.
+        let userNamedSession = extraFlags.contains { line in
+            let head = line.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? line
+            return head == "--name" || head == "-n" || head.hasPrefix("--name=") || head.hasPrefix("-n=")
         }
         let sessionName = config.name.trimmingCharacters(in: .whitespaces)
         if !sessionName.isEmpty, !userNamedSession {
