@@ -117,13 +117,13 @@ final class SpeechOutput: NSObject {
             of: "(?<![\\w/])~?/?(?:[\\w.@-]+/){1,}([\\w.@-]+)",
             with: "$1", options: .regularExpression)
 
-        // Markdown emphasis, headings, list bullets, blockquotes, table pipes.
+        // Markdown emphasis.
         text = text.replacingOccurrences(of: "\\*\\*([^*]+)\\*\\*", with: "$1", options: .regularExpression)
         text = text.replacingOccurrences(of: "(?<!\\w)\\*([^*\n]+)\\*", with: "$1", options: .regularExpression)
-        text = text.replacingOccurrences(of: "^#{1,6}\\s*", with: "", options: [.regularExpression])
-        text = text.replacingOccurrences(of: "(?m)^\\s{0,8}[-*+]\\s+", with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: "(?m)^\\s{0,8}>\\s?", with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: "(?m)^\\s*\\|.*\\|\\s*$", with: "", options: .regularExpression)
+
+        // Headings, list bullets, blockquotes and table pipes, plus the sentence
+        // boundaries they imply.
+        text = punctuateBlocks(in: text)
 
         // Markdown links → the link text, not the URL.
         text = text.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
@@ -143,6 +143,67 @@ final class SpeechOutput: NSObject {
         text = text.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
 
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Strip block-level markdown markers and give the synthesizer the sentence
+    /// boundaries the markup was carrying.
+    ///
+    /// A newline is not a pause to `AVSpeechSynthesizer` — it is whitespace. So a
+    /// bullet list whose items have no terminal punctuation is read as one breathless
+    /// run-on ("The filter drops 19 voices Selection retention holds Nothing else
+    /// regressed"), and a heading collides with the sentence beneath it. Markdown
+    /// encodes those breaks structurally rather than with punctuation, and stripping
+    /// the markers throws that information away unless we convert it first.
+    ///
+    /// Punctuation is only added where a break is certain: headings and list items,
+    /// which are self-contained by definition, and the last line before a blank line.
+    /// A hard-wrapped sentence in the middle of a paragraph is left alone, since
+    /// splitting it would introduce a pause that isn't there.
+    private static func punctuateBlocks(in text: String) -> String {
+        let heading = try! NSRegularExpression(pattern: "^#{1,6}\\s*")
+        let bullet = try! NSRegularExpression(pattern: "^\\s{0,8}[-*+]\\s+")
+        let ordered = try! NSRegularExpression(pattern: "^\\s{0,8}\\d+[.)]\\s+")
+        let quote = try! NSRegularExpression(pattern: "^\\s{0,8}>\\s?")
+        let tableRow = try! NSRegularExpression(pattern: "^\\s*\\|.*\\|\\s*$")
+
+        func strip(_ re: NSRegularExpression, _ s: String) -> String? {
+            let range = NSRange(s.startIndex..., in: s)
+            guard let m = re.firstMatch(in: s, range: range), m.range.location == 0 else { return nil }
+            return (s as NSString).replacingCharacters(in: m.range, with: "")
+        }
+
+        // Pass 1: drop table rows and strip markers, remembering which lines were
+        // structurally self-contained.
+        var lines: [(text: String, selfContained: Bool)] = []
+        for line in text.components(separatedBy: "\n") {
+            if strip(tableRow, line) != nil { continue }
+            if let s = strip(heading, line) { lines.append((s, true)); continue }
+            if let s = strip(bullet, line) { lines.append((s, true)); continue }
+            // Ordered-list numerals are meaningful to a listener, so only the
+            // boundary is recorded — the "1." itself stays.
+            if strip(ordered, line) != nil { lines.append((line, true)); continue }
+            if let s = strip(quote, line) { lines.append((s, false)); continue }
+            lines.append((line, false))
+        }
+
+        // Pass 2: terminate a line when its break is certain.
+        let alreadyTerminated = CharacterSet(charactersIn: ".!?:;,…")
+        var out: [String] = []
+        for (i, line) in lines.enumerated() {
+            var body = line.text.trimmingCharacters(in: .whitespaces)
+            guard !body.isEmpty else { out.append(""); continue }
+
+            let endsBlock = i + 1 >= lines.count
+                || lines[i + 1].text.trimmingCharacters(in: .whitespaces).isEmpty
+            let breakIsCertain = line.selfContained || endsBlock
+
+            if breakIsCertain, let last = body.unicodeScalars.last,
+               !alreadyTerminated.contains(last) {
+                body += "."
+            }
+            out.append(body)
+        }
+        return out.joined(separator: "\n")
     }
 
     /// Replace ``` fences with a spoken summary of their size.
