@@ -130,6 +130,11 @@ struct ConsoleForgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var store = SessionStore()
     @State private var activityTracker = TabActivityTracker()
+    /// Owns the live `TerminalSession` per open tab. Held at app scope (not inside
+    /// `TerminalContainerView`) because the voice channel needs to reach a tab's PTY,
+    /// and because a session manager should outlive any one view's lifetime.
+    @State private var terminalManager = TerminalSessionManager()
+    @State private var voice = VoiceController()
     @State private var commandWatcher = CommandWatcher()
     @State private var companionSettings: CompanionSettings
     @State private var companionAuth: CompanionAuth
@@ -158,6 +163,8 @@ struct ConsoleForgeApp: App {
             ContentView()
                 .environment(store)
                 .environment(activityTracker)
+                .environment(terminalManager)
+                .environment(voice)
                 .environment(companionAuth)
                 .environment(supportReporter)
                 .task {
@@ -181,6 +188,20 @@ struct ConsoleForgeApp: App {
                     store.onTabClosed = { tabID in
                         activityTracker.removeTab(tabID: tabID)
                     }
+
+                    // The voice channel follows the ACTIVE tab: what you hear is what
+                    // you're looking at. Resolving it through a closure keeps
+                    // VoiceController free of a SessionStore dependency, the same shape
+                    // TabActivityTracker uses for its working-directory lookup.
+                    voice.activeTab = {
+                        guard let id = store.activeTabID,
+                              let session = store.session(for: id) else { return nil }
+                        return (id: id,
+                                name: session.name,
+                                workingDirectory: session.workingDirectory,
+                                claudeSessionID: session.claudeSessionID)
+                    }
+                    voice.retargetToActiveTab()
 
                     // Prompt for Full Disk Access on first launch, or if not yet granted
                     if !hasFullDiskAccess() {

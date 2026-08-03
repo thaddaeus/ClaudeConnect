@@ -4,11 +4,24 @@ import UniformTypeIdentifiers
 struct TerminalTabBar: View {
     @Environment(SessionStore.self) private var store
     @Environment(TabActivityTracker.self) private var activityTracker
+    @Environment(VoiceController.self) private var voice
     @State private var hoveredTabID: UUID?
     @State private var draggingTabID: UUID?
     @State private var dropTargetTabID: UUID?
 
     var body: some View {
+        HStack(spacing: 0) {
+            tabStrip
+            voiceToggle
+        }
+        .frame(height: 36)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private var tabStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
                 ForEach(store.openTabIDs, id: \.self) { sessionID in
@@ -29,11 +42,28 @@ struct TerminalTabBar: View {
             }
             .padding(.horizontal, 4)
         }
-        .frame(height: 36)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(alignment: .bottom) {
-            Divider()
+    }
+
+    /// Shows/hides the voice sidecar. Lit green while something is being spoken, so the
+    /// state is readable with the panel collapsed.
+    private var voiceToggle: some View {
+        Button {
+            voice.isPanelVisible.toggle()
+        } label: {
+            Image(systemName: voice.speech.isSpeaking ? "waveform" : "speaker.wave.2")
+                .font(.system(size: 12))
+                .foregroundStyle(voiceToggleColor)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .padding(.trailing, 6)
+        .help(voice.isPanelVisible ? "Hide voice panel" : "Show voice panel")
+    }
+
+    private var voiceToggleColor: Color {
+        if voice.speech.isSpeaking { return .green }
+        return voice.isEnabled ? .primary : Color.secondary.opacity(0.5)
     }
 
     /// The parent tab's color when `session` is a grouped child whose parent is open.
