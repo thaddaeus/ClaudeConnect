@@ -66,16 +66,32 @@ final class SpeechOutput: NSObject {
         synthesizer.stopSpeaking(at: .word)
     }
 
+    /// The legacy MacinTalk namespace, which is where every novelty voice lives —
+    /// Zarvox, Boing, Bahh, Bells, Trinoids, and friends, alongside sub-compact
+    /// relics like Fred and Albert. None of them are worth reading a reply in, and
+    /// they bury the real voices in a 30-entry picker. Matched by identifier, not
+    /// name, because `name` is localized.
+    private static let noveltyVoicePrefix = "com.apple.speech.synthesis.voice."
+
     /// Voices offered in Settings, best quality first.
-    static func availableVoices() -> [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language.hasPrefix("en") }
-            .sorted { lhs, rhs in
-                if lhs.quality.rawValue != rhs.quality.rawValue {
-                    return lhs.quality.rawValue > rhs.quality.rawValue
-                }
-                return lhs.name < rhs.name
+    ///
+    /// `keeping` is the currently-selected identifier: if a user already picked a
+    /// voice that this filter now hides, it stays in the list so the picker doesn't
+    /// render blank against a selection with no matching tag.
+    static func availableVoices(keeping selected: String? = nil) -> [AVSpeechSynthesisVoice] {
+        let all = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
+        var offered = all.filter {
+            !$0.identifier.hasPrefix(noveltyVoicePrefix) || $0.identifier == selected
+        }
+        // Belt-and-braces: never hand back an empty picker if a system somehow ships
+        // nothing but the legacy namespace.
+        if offered.isEmpty { offered = all }
+        return offered.sorted { lhs, rhs in
+            if lhs.quality.rawValue != rhs.quality.rawValue {
+                return lhs.quality.rawValue > rhs.quality.rawValue
             }
+            return lhs.name < rhs.name
+        }
     }
 
     // MARK: - Sanitizer
