@@ -201,7 +201,26 @@ struct ConsoleForgeApp: App {
                                 workingDirectory: session.workingDirectory,
                                 claudeSessionID: session.claudeSessionID)
                     }
+                    voice.openTabs = {
+                        store.openTabIDs.compactMap { id in
+                            store.session(for: id).map { (id: id, name: $0.name) }
+                        }
+                    }
+                    voice.switchToTab = { store.switchToTab(sessionID: $0) }
+                    voice.goToNextTab = { store.nextTab() }
+                    voice.goToPreviousTab = { store.previousTab() }
+                    // Spoken input reaches a session the same way typing does — through
+                    // the live TerminalSession's PTY.
+                    voice.sendToTab = { tabID, text in
+                        terminalManager.session(for: tabID)?.sendText(text)
+                    }
+                    voice.sendControlToTab = { tabID, byte in
+                        terminalManager.session(for: tabID)?.sendControl(byte)
+                    }
                     voice.retargetToActiveTab()
+                    if voice.isEnabled && voice.isMicEnabled {
+                        voice.startListening()
+                    }
 
                     // Prompt for Full Disk Access on first launch, or if not yet granted
                     if !hasFullDiskAccess() {
@@ -280,6 +299,7 @@ struct ConsoleForgeApp: App {
         Settings {
             SettingsView()
                 .environment(companionAuth)
+                .environment(voice)
         }
 
         Window("Edit Session", id: "session-editor") {

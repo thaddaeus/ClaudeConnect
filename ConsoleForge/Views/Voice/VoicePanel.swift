@@ -15,7 +15,13 @@ struct VoicePanel: View {
             Divider()
             targetLine
             Divider()
+            micStrip
+            Divider()
             log
+            if voice.pendingDictation != nil {
+                Divider()
+                confirmBar
+            }
             Divider()
             controls
         }
@@ -76,6 +82,126 @@ struct VoicePanel: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    // MARK: - Mic
+
+    private var micStrip: some View {
+        @Bindable var voice = voice
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: micSymbol)
+                    .font(.system(size: 11))
+                    .foregroundStyle(micColor)
+                    .frame(width: 14)
+
+                levelMeter
+
+                Spacer()
+
+                Toggle("", isOn: $voice.isMicEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .disabled(!voice.isEnabled || !voice.isMicSupported)
+                    .help(voice.isMicSupported ? "Listen for the wake phrase"
+                                               : "Listening requires macOS 26")
+            }
+
+            Text(micDetail)
+                .font(.system(size: 10))
+                .foregroundStyle(micStatusIsProblem ? .orange : .secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !voice.caption.isEmpty {
+                Text(voice.caption)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .animation(.easeInOut(duration: 0.12), value: voice.caption)
+    }
+
+    /// Twelve bars driven by the input level — enough to read "it is hearing me"
+    /// at a glance without being a real spectrum.
+    private var levelMeter: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<12, id: \.self) { index in
+                let threshold = Float(index + 1) / 12
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(voice.inputLevel >= threshold ? Color.green : Color.secondary.opacity(0.22))
+                    .frame(width: 3, height: 4 + CGFloat(index) * 0.7)
+            }
+        }
+        .frame(height: 14, alignment: .bottom)
+        .animation(.linear(duration: 0.08), value: voice.inputLevel)
+    }
+
+    private var micSymbol: String {
+        switch voice.micStatus {
+        case .listening, .echoCancellationUnavailable: return "mic.fill"
+        case .denied, .failed, .unsupported: return "mic.slash"
+        case .preparing, .downloadingModel: return "mic.badge.plus"
+        case .off: return "mic.slash"
+        }
+    }
+
+    private var micColor: Color {
+        switch voice.micStatus {
+        case .listening: return .green
+        case .echoCancellationUnavailable: return .orange
+        case .denied, .failed, .unsupported: return .orange
+        case .preparing, .downloadingModel: return .secondary
+        case .off: return .secondary
+        }
+    }
+
+    private var micStatusIsProblem: Bool {
+        switch voice.micStatus {
+        case .denied, .failed, .unsupported, .echoCancellationUnavailable: return true
+        default: return false
+        }
+    }
+
+    private var micDetail: String {
+        switch voice.micStatus {
+        case .listening:
+            return "say \"\(voice.wakePhrase)\" then your prompt"
+        case .denied:
+            return "Mic access denied — System Settings → Privacy & Security → Microphone"
+        default:
+            return voice.micStatus.summary
+        }
+    }
+
+    // MARK: - Confirm
+
+    private var confirmBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(voice.pendingDictation ?? "")
+                .font(.system(size: 11))
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Send") { voice.confirmPendingDictation() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                Button("Cancel") { voice.cancelPendingDictation() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.08))
     }
 
     // MARK: - Log

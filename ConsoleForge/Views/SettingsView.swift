@@ -6,6 +6,7 @@ import AuthenticationServices
 /// (e.g. "Account Settings…" jumps straight to the Account pane).
 enum SettingsTab: String {
     case general
+    case voice
     case account
 
     /// UserDefaults key shared with anything that wants to preselect a tab.
@@ -20,6 +21,9 @@ struct SettingsView: View {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
+            VoiceSettingsView()
+                .tabItem { Label("Voice", systemImage: "waveform") }
+                .tag(SettingsTab.voice)
             AccountSettingsView()
                 .tabItem { Label("Account", systemImage: "person.crop.circle") }
                 .tag(SettingsTab.account)

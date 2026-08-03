@@ -8,5 +8,9 @@
     <true/>
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+    <!-- Voice input. The hardened runtime blocks microphone access without this
+         resource-access entitlement even though the app is not sandboxed. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>

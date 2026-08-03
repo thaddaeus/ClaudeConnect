@@ -126,6 +126,13 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- Voice input. Both strings are REQUIRED for the voice panel's mic: macOS
+         kills the process on first access if either is missing. Transcription is
+         on-device (SpeechAnalyzer, macOS 26+) — no audio leaves the machine. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ConsoleForge listens for your wake phrase so you can talk to a session instead of typing. Audio is transcribed on this Mac and never leaves it.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>ConsoleForge transcribes your speech on-device to send it to the active session.</string>
     <!-- Sparkle auto-update. SUFeedURL uses GitHub's stable "latest release"
          redirect; build.sh uploads appcast.xml as an asset to each release.
          SUPublicEDKey verifies EdDSA update signatures (private key in login
