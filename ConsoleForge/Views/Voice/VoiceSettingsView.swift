@@ -52,7 +52,8 @@ struct VoiceSettingsView: View {
                     set: { voice.speech.voiceIdentifier = $0.isEmpty ? nil : $0 }
                 )) {
                     Text("System default").tag("")
-                    ForEach(SpeechOutput.availableVoices(), id: \.identifier) { v in
+                    ForEach(SpeechOutput.availableVoices(keeping: voice.speech.voiceIdentifier),
+                            id: \.identifier) { v in
                         Text(voiceLabel(v)).tag(v.identifier)
                     }
                 }
@@ -69,9 +70,10 @@ struct VoiceSettingsView: View {
                     .controlSize(.small)
                 }
 
-                Text("Enhanced and Premium voices sound markedly better than Default — download them in System Settings → Accessibility → Spoken Content → System Voice.")
+                Text(voiceDownloadHint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Commands") {
@@ -93,6 +95,21 @@ struct VoiceSettingsView: View {
         “\(wake), mute” closes the mic
         Anything else is typed into the active tab.
         """
+    }
+
+    /// Where to actually get the good voices. macOS 26 renamed the pane from
+    /// "Spoken Content" to "Read & Speak" and moved the download control behind an
+    /// unlabeled ⓘ next to the voice chooser, so the pre-26 wording sends users
+    /// hunting for a "Manage Voices" button that no longer exists.
+    private var voiceDownloadHint: String {
+        let path: String
+        if #available(macOS 26, *) {
+            path = "System Settings → Accessibility → Read & Speak, then click the ⓘ next to the system voice"
+        } else {
+            path = "System Settings → Accessibility → Spoken Content → System Voice → Manage Voices"
+        }
+        return "Enhanced and Premium voices sound markedly better than Default. "
+            + "Download them in \(path). They appear here once installed."
     }
 
     private func voiceLabel(_ v: AVSpeechSynthesisVoice) -> String {
