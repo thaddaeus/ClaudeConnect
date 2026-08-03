@@ -3,8 +3,11 @@ import SwiftUI
 struct TerminalContainerView: View {
     @Environment(SessionStore.self) private var store
     @Environment(TabActivityTracker.self) private var activityTracker
+    /// Owned by the app (see `ConsoleForgeApp`), not this view — the voice channel
+    /// needs to reach a tab's PTY too.
+    @Environment(TerminalSessionManager.self) private var manager
+    @Environment(VoiceController.self) private var voice
     @State private var tabStates: [UUID: SessionState] = [:]
-    @State private var manager = TerminalSessionManager()
     /// Gates session creation until the real terminal-area size is known, so sessions
     /// are never born at the placeholder size (whose reflow-on-mount corrupts the
     /// SwiftTerm buffer — especially for restored/--resume tabs).
@@ -15,6 +18,19 @@ struct TerminalContainerView: View {
         // re-evaluates `session:`) whenever the active tab changes.
         let activeID = store.activeTabID
 
+        HStack(spacing: 0) {
+            terminalColumn(activeID: activeID)
+
+            if voice.isPanelVisible {
+                Divider()
+                VoicePanel()
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: voice.isPanelVisible)
+    }
+
+    private func terminalColumn(activeID: UUID?) -> some View {
         VStack(spacing: 0) {
             // Tab bar
             if !store.openTabIDs.isEmpty {
@@ -58,6 +74,8 @@ struct TerminalContainerView: View {
                 if let tabID = newID {
                     activityTracker.didFocusTab(tabID: tabID)
                 }
+                // Only the active tab is audible.
+                voice.retargetToActiveTab()
             }
         }
     }

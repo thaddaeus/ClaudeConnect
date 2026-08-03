@@ -146,6 +146,28 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         terminalView.frame = NSRect(origin: terminalView.frame.origin, size: size)
     }
 
+    /// Type text into this session's PTY as if the user had pasted it, optionally
+    /// submitting with a carriage return. Used by the voice channel.
+    ///
+    /// The text is wrapped in bracketed paste (`ESC[200~ … ESC[201~`) rather than sent
+    /// raw: Claude's TUI treats a bare newline mid-text as "submit", so a dictated
+    /// sentence containing one would fire the prompt half-written. Inside a bracketed
+    /// paste the whole payload arrives as literal input, and only the trailing `\r`
+    /// submits. Any stray ESC in the payload is dropped — it would terminate the paste
+    /// early and let the remainder run as control sequences.
+    func sendText(_ text: String, submit: Bool = true) {
+        guard let process, !text.isEmpty else { return }
+        let sanitized = text.replacingOccurrences(of: "\u{1b}", with: "")
+        var payload = "\u{1b}[200~" + sanitized + "\u{1b}[201~"
+        if submit { payload += "\r" }
+        process.write(Data(payload.utf8))
+    }
+
+    /// Send a single control byte (e.g. `0x1b` for Escape, which interrupts Claude).
+    func sendControl(_ byte: UInt8) {
+        process?.write(Data([byte]))
+    }
+
     /// Ask the child to repaint its TUI at the current geometry by re-delivering
     /// SIGWINCH (no winsize change, no input bytes). Used after a coalesced resize
     /// settles so an idle Claude redraws its prompt/status instead of staying

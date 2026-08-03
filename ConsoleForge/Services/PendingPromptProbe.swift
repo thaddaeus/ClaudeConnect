@@ -35,7 +35,11 @@ enum PendingPromptProbe {
     ///
     /// Pure file IO — call it off the main thread.
     static func isAwaitingUser(workingDirectory: String) -> Bool? {
-        guard let url = newestTranscriptURL(workingDirectory: workingDirectory) else { return nil }
+        // Location logic is shared with TranscriptTailer — see ClaudeTranscript. This
+        // caller has no pinned session id to hand it, so it keeps the historical
+        // newest-transcript-in-the-project-directory behaviour.
+        guard let url = ClaudeTranscript.url(workingDirectory: workingDirectory,
+                                             claudeSessionID: nil) else { return nil }
         guard let lines = tailLines(of: url), !lines.isEmpty else { return nil }
 
         var pending = Set<String>()
@@ -59,57 +63,6 @@ enum PendingPromptProbe {
         return !pending.isEmpty
     }
 
-    // MARK: - Locate the transcript
-
-    /// Claude Code writes one `<session-id>.jsonl` per session under
-    /// `~/.claude/projects/<cwd-with-slashes-as-dashes>/`, updated live. The
-    /// most-recently-modified file in that directory is the active session.
-    ///
-    /// Caveat: two sessions sharing a working directory make "newest file" ambiguous.
-    /// That misreads which session is blocked, never whether one is.
-    private static func newestTranscriptURL(workingDirectory: String) -> URL? {
-        let cwd = (workingDirectory as NSString).expandingTildeInPath
-        guard !cwd.isEmpty else { return nil }
-        let projects = ("~/.claude/projects" as NSString).expandingTildeInPath
-        let projectsURL = URL(fileURLWithPath: projects, isDirectory: true)
-
-        // Claude encodes the project dir name by replacing path separators with "-".
-        // Primary candidate handles the common case; if it's missing (e.g. a path
-        // containing "." which some Claude versions also encode), fall back to
-        // scanning for the dir whose transcripts record this cwd.
-        let primary = projectsURL.appendingPathComponent(cwd.replacingOccurrences(of: "/", with: "-"))
-        let candidateDirs: [URL]
-        if FileManager.default.fileExists(atPath: primary.path) {
-            candidateDirs = [primary]
-        } else {
-            candidateDirs = projectDirsMatching(cwd: cwd, in: projectsURL)
-        }
-
-        var newest: (url: URL, date: Date)?
-        for dir in candidateDirs {
-            let files = (try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-            for f in files where f.pathExtension == "jsonl" {
-                let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                if newest == nil || date > newest!.date { newest = (f, date) }
-            }
-        }
-        return newest?.url
-    }
-
-    /// Fallback: find project dirs whose newest transcript records the target `cwd`.
-    private static func projectDirsMatching(cwd: String, in projectsURL: URL) -> [URL] {
-        let dirs = (try? FileManager.default.contentsOfDirectory(
-            at: projectsURL, includingPropertiesForKeys: nil)) ?? []
-        return dirs.filter { dir in
-            guard let any = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
-                .first(where: { $0.pathExtension == "jsonl" }),
-                  let head = try? String(contentsOf: any, encoding: .utf8).prefix(4096) else { return false }
-            return head.contains("\"cwd\":\"\(cwd)\"")
-        }
-    }
-
     // MARK: - Read the tail
 
     /// Only the end of the file matters — a pending call lives at the tail, and
@@ -128,10 +81,6 @@ enum PendingPromptProbe {
         if start > 0, let nl = text.firstIndex(of: "\n") {
             text = String(text[text.index(after: nl)...])
         }
-        return text.split(separator: "\n").compactMap { line in
-            guard let d = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
-            return obj
-        }
+        return ClaudeTranscript.decodeLines(text)
     }
 }
