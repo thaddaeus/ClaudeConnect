@@ -125,9 +125,16 @@ final class TranscriptTailer {
     private func scheduleWaitForFile(workingDirectory: String, claudeSessionID: UUID?, tabID: UUID) {
         waitForFileTask?.cancel()
         waitForFileTask = Task { [weak self] in
-            // Poll gently — this only runs before a tab's first turn.
-            for _ in 0..<120 {
-                try? await Task.sleep(for: .seconds(1))
+            // Runs until the transcript appears or this tab stops being the target.
+            //
+            // Deliberately unbounded: a tab can sit open for an hour before its first
+            // prompt, and a deadline here means "opened a tab, came back later, started
+            // working, never heard a word" — silently, with the panel still reporting
+            // that voice is on. The loop costs one `stat` per interval and is cancelled
+            // by `stop()`/`retarget`, so outliving the tab is not a risk.
+            var interval: Duration = .seconds(1)
+            while true {
+                try? await Task.sleep(for: interval)
                 guard !Task.isCancelled, let self, self.targetTabID == tabID else { return }
                 if ClaudeTranscript.url(workingDirectory: workingDirectory,
                                         claudeSessionID: claudeSessionID) != nil {
@@ -136,6 +143,9 @@ final class TranscriptTailer {
                                 claudeSessionID: claudeSessionID, tabID: tabID)
                     return
                 }
+                // Back off once the first-turn window has clearly passed, so a tab left
+                // open all day isn't polling every second.
+                if interval < .seconds(5) { interval = .seconds(5) }
             }
         }
     }
