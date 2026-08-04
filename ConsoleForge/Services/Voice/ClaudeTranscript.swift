@@ -37,8 +37,16 @@ enum ClaudeTranscript {
                 let asIs = dir.appendingPathComponent("\(sessionID.uuidString).jsonl")
                 if FileManager.default.fileExists(atPath: asIs.path) { return asIs }
             }
+            // A pinned tab's transcript is that file or nothing. Falling through to
+            // "newest in the directory" here is actively harmful: a tab that has not
+            // taken its first turn has no file yet, so the fallback hands back some
+            // OTHER session's transcript — usually a dead one — and the caller attaches
+            // to it, seeks to its end, and waits forever for appends that never come.
+            // Returning nil lets the tailer keep waiting for the real file to appear.
+            return nil
         }
 
+        // No pinned id (a `--continue` tab): "newest" is the only signal available.
         return newestTranscript(in: dirs)
     }
 
