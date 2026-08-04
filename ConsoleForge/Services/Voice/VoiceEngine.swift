@@ -64,11 +64,25 @@ final class VoiceEngine {
             return
         }
 
-        let locale = Locale.current
+        // `SpeechTranscriber` only works for locales it actually supports, and asking for
+        // an unsupported one fails by producing no results at all rather than by throwing.
+        guard let locale = await Self.supportedLocale(matching: .current) else {
+            onStatus?(.failed("On-device transcription isn't available for "
+                              + "\(Locale.current.identifier(.bcp47))."))
+            return
+        }
+
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
         let detector = SpeechDetector()
         self.transcriber = transcriber
         self.detector = detector
+
+        // Step 2 of Apple's documented asset flow: claim one of this app's locale
+        // reservations so the system keeps the model installed and updated for us.
+        // Best-effort on purpose — transcription was measured to work without it, so a
+        // reservation failure (the per-app cap is `maximumReservedLocales`) must not be
+        // turned into a reason to refuse to listen.
+        try? await AssetInventory.reserve(locale: locale)
 
         // The locale's model may not be on disk yet — this is a real download on first run.
         do {
@@ -114,8 +128,9 @@ final class VoiceEngine {
             return
         }
 
+        let echoCancelled: Bool
         do {
-            try startAudioCapture(convertingTo: analyzerFormat)
+            echoCancelled = try startAudioCapture(convertingTo: analyzerFormat)
         } catch {
             onStatus?(.failed(error.localizedDescription))
             await stopAnalyzer()
@@ -123,7 +138,26 @@ final class VoiceEngine {
         }
 
         isRunning = true
-        onStatus?(.listening)
+        // Reported last, so a failed AEC isn't immediately overwritten by `.listening` —
+        // the whole point of that status is that the user sees it.
+        onStatus?(echoCancelled ? .listening : .echoCancellationUnavailable)
+    }
+
+    /// The closest locale `SpeechTranscriber` actually supports, or nil if there is none.
+    ///
+    /// `Locale.current` is frequently more specific than the supported set (region
+    /// overrides, calendar and currency subtags), so an exact identifier comparison
+    /// rejects locales that are really fine. Match on BCP-47 first, then fall back to any
+    /// supported locale sharing the language — an en-AU user is better served by en-GB
+    /// than by silence.
+    private static func supportedLocale(matching desired: Locale) async -> Locale? {
+        let supported = await SpeechTranscriber.supportedLocales
+        let wanted = desired.identifier(.bcp47)
+        if let exact = supported.first(where: { $0.identifier(.bcp47) == wanted }) {
+            return exact
+        }
+        guard let language = desired.language.languageCode?.identifier else { return nil }
+        return supported.first { $0.language.languageCode?.identifier == language }
     }
 
     func stop() {
@@ -155,16 +189,20 @@ final class VoiceEngine {
 
     // MARK: - Audio capture
 
-    private func startAudioCapture(convertingTo analyzerFormat: AVAudioFormat) throws {
+    /// Returns whether acoustic echo cancellation is active, so the caller can report the
+    /// final state rather than have it clobbered by `.listening`.
+    private func startAudioCapture(convertingTo analyzerFormat: AVAudioFormat) throws -> Bool {
         let input = audioEngine.inputNode
 
-        // AEC — see the note on this type. Must be set before the engine starts.
+        // AEC — see the note on this type. Must be set before the engine starts, and before
+        // the format is read: enabling voice processing reconfigures the input node.
+        var echoCancelled = true
         do {
             try input.setVoiceProcessingEnabled(true)
         } catch {
             // Not fatal, but the user should know: without it, always-on listening will
             // hear the app's own speech.
-            onStatus?(.echoCancellationUnavailable)
+            echoCancelled = false
         }
 
         let micFormat = input.outputFormat(forBus: 0)
@@ -173,6 +211,21 @@ final class VoiceEngine {
         }
         guard let converter = AVAudioConverter(from: micFormat, to: analyzerFormat) else {
             throw VoiceEngineError.incompatibleFormat
+        }
+
+        // Enabling voice processing reconfigures the input node into a multi-channel
+        // layout — 5 discrete channels on a MacBook Air's built-in mic — and that layout
+        // has no defined spatial arrangement, so `AVAudioConverter` has no downmix
+        // coefficients for it. Asked to fold it to mono it does NOT fail: it reports no
+        // error, returns a full-length buffer, and fills it with digital silence. The
+        // analyzer then transcribes silence forever while every visible signal (engine
+        // running, level meter, "listening") looks healthy.
+        //
+        // Selecting the channel explicitly sidesteps the downmix entirely. Channel 0 is
+        // the processed voice channel, and it's the same one `peakLevel` meters, so the
+        // meter and the transcriber now agree about what they're hearing.
+        if micFormat.channelCount > 1 {
+            converter.channelMap = [0]
         }
         self.converter = converter
 
@@ -188,6 +241,7 @@ final class VoiceEngine {
 
         audioEngine.prepare()
         try audioEngine.start()
+        return echoCancelled
     }
 
     private nonisolated static func convert(_ buffer: AVAudioPCMBuffer,
