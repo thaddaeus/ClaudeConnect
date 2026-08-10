@@ -180,14 +180,19 @@ struct ClaudeProcessBuilder {
         let workDir = (config.workingDirectory as NSString).expandingTildeInPath
         let command = parts.joined(separator: " ")
 
-        // Inject ConsoleForge env vars so tabs can identify themselves
-        var envVars: [String]? = nil
+        // Inject ConsoleForge env vars so tabs can identify themselves.
+        var inherited = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        // Tells `consoleforge-tab` which app to talk to. Without it the CLI
+        // defaults to production, so a tab running inside beta would spawn its
+        // tabs in the production window — `~/.local/bin/consoleforge-tab` comes
+        // before the bundle's own copy on PATH, so the binary on disk can't be
+        // what identifies the channel. The environment can.
+        inherited.append("CONSOLEFORGE_APP_SUPPORT=\(AppChannel.supportDirectory().path)")
         if let tabID = tabID {
-            var inherited = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
             inherited.append("CONSOLEFORGE_TAB_ID=\(tabID.uuidString)")
             inherited.append("CONSOLEFORGE_SESSION_NAME=\(config.name)")
-            envVars = inherited
         }
+        let envVars: [String]? = inherited
 
         // Spawn the user's login shell which will resolve PATH and run claude
         // Using -l for login shell (loads .zprofile for PATH), -c for command

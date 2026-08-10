@@ -6,6 +6,10 @@
 # Targets the prod install in /Applications so the app you normally launch is
 # the one you're testing (no separate build/ copy to get confused with).
 #
+# THIS QUITS THE RUNNING APP — every iteration costs the live sessions. If you
+# have real work open, use ./scripts/beta.sh instead: it builds a side-by-side
+# "ConsoleForge Beta.app" with its own state and never touches this install.
+#
 # The re-sign step is mandatory. Copying a fresh binary into the bundle
 # invalidates its signature, so to the Keychain every relaunch looks like a
 # brand-new untrusted app — which forces the login-PASSWORD prompt (Touch ID /

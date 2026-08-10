@@ -5,8 +5,9 @@ import Security
 /// (e.g. the companion device token). Secrets must never live in UserDefaults
 /// or the repo — per project rule, no secrets in committed files.
 enum KeychainStore {
-    /// Service namespace for all ConsoleForge Keychain items.
-    static let service = "com.thaddaeus.ConsoleForge"
+    /// Service namespace for all ConsoleForge Keychain items. Per-channel, so a
+    /// beta build never touches production's credentials.
+    static let service = AppChannel.keychainService
 
     /// Reads a string secret for `account`, or nil if absent.
     static func read(account: String) -> String? {

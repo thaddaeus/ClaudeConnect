@@ -22,10 +22,7 @@ enum TabEventWriter {
     }
 
     static var eventsDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("ConsoleForge/events", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        AppChannel.supportDirectory("events")
     }
 
     static func emitClose(tabID: UUID, tabName: String, reason: CloseReason, exitCode: Int32? = nil) {

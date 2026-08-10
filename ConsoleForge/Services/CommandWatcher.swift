@@ -27,11 +27,11 @@ class CommandWatcher {
     private var source: DispatchSourceFileSystemObject?
     private var dirFD: Int32 = -1
 
+    /// Per-channel, so beta and production never watch the same directory —
+    /// otherwise both apps race to claim each command file and the wrong one
+    /// opens the tab.
     static var commandsDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("ConsoleForge/commands", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        AppChannel.supportDirectory("commands")
     }
 
     func start() {
