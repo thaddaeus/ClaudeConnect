@@ -24,6 +24,12 @@ Open options:
   --no-group               Don't group under the spawning tab (when run inside a
                            ConsoleForge tab, new tabs group under it by default)
 
+Target app (all modes):
+  --app CHANNEL            Which install to talk to: "prod" (default) or "beta".
+                           Run inside a ConsoleForge tab with no --app, the
+                           command goes to the app that owns that tab, so beta
+                           tabs spawn beta tabs and production stays untouched.
+
 Close options:
   --close-self             Close the tab this command runs in (reads CONSOLEFORGE_TAB_ID)
   --close                  Close a tab (requires --name)
@@ -46,11 +52,61 @@ import sys
 import time
 import signal
 
-APP_SUPPORT = os.path.expanduser("~/Library/Application Support/ConsoleForge")
-COMMANDS_DIR = os.path.join(APP_SUPPORT, "commands")
-EVENTS_DIR = os.path.join(APP_SUPPORT, "events")
-os.makedirs(COMMANDS_DIR, exist_ok=True)
-os.makedirs(EVENTS_DIR, exist_ok=True)
+APP_SUPPORT_ROOT = os.path.expanduser("~/Library/Application Support")
+
+# Application Support directory name per channel. These MUST match AppChannel.swift:
+# production's is the historical literal "ConsoleForge" and can never be renamed.
+CHANNEL_DIRS = {
+    "prod": "ConsoleForge",
+    "production": "ConsoleForge",
+    "beta": "ConsoleForge Beta",
+}
+
+# Set by resolve_target(); every command read/write goes through these.
+COMMANDS_DIR = None
+EVENTS_DIR = None
+
+
+def resolve_target(channel):
+    """Pick which install to talk to and create its command/event dirs.
+
+    Precedence: explicit --app > CONSOLEFORGE_APP_SUPPORT (exported by whichever
+    ConsoleForge owns this tab) > production. The middle case is what makes a tab
+    spawned inside beta land in beta: a single consoleforge-tab on PATH serves
+    both apps, so the environment — not the file on disk — identifies the channel.
+    """
+    global COMMANDS_DIR, EVENTS_DIR
+
+    if channel is not None:
+        if channel not in CHANNEL_DIRS:
+            print(
+                f"Error: unknown --app '{channel}'. Use one of: "
+                + ", ".join(sorted(CHANNEL_DIRS)),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        app_support = os.path.join(APP_SUPPORT_ROOT, CHANNEL_DIRS[channel])
+    else:
+        app_support = os.environ.get("CONSOLEFORGE_APP_SUPPORT") or os.path.join(
+            APP_SUPPORT_ROOT, CHANNEL_DIRS["prod"]
+        )
+
+    COMMANDS_DIR = os.path.join(app_support, "commands")
+    EVENTS_DIR = os.path.join(app_support, "events")
+    os.makedirs(COMMANDS_DIR, exist_ok=True)
+    os.makedirs(EVENTS_DIR, exist_ok=True)
+
+
+def take_app_flag(args):
+    """Pop `--app CHANNEL` out of args (valid in every mode) and return it."""
+    if "--app" not in args:
+        return args, None
+    idx = args.index("--app")
+    if idx + 1 >= len(args):
+        print("Error: --app requires a channel (prod or beta)", file=sys.stderr)
+        sys.exit(1)
+    channel = args[idx + 1]
+    return args[:idx] + args[idx + 2:], channel
 
 
 def send_command(cmd):
@@ -137,6 +193,13 @@ def read_and_cleanup(event_file):
 def main():
     args = sys.argv[1:]
     i = 0
+
+    if any(a in ("-h", "--help") for a in args):
+        print(__doc__)
+        sys.exit(0)
+
+    args, channel = take_app_flag(args)
+    resolve_target(channel)
 
     # Handle --wait-for-close
     if "--wait-for-close" in args:

@@ -142,11 +142,17 @@ struct ConsoleForgeApp: App {
     @State private var showFDAPrompt = false
 
     /// Sparkle updater. Held as a plain `let` (must outlive view churn, not @State).
-    /// `startingUpdater: true` starts scheduled background checks immediately;
-    /// cadence/automatic-check policy comes from Info.plist (SUScheduledCheckInterval,
+    /// `startingUpdater:` starts scheduled background checks immediately; cadence
+    /// and automatic-check policy come from Info.plist (SUScheduledCheckInterval,
     /// SUEnableAutomaticChecks).
+    ///
+    /// Non-production builds never start it. A beta that checked the production
+    /// feed would "update" itself to the shipping release and overwrite the very
+    /// build under test — and with no SUFeedURL in the beta Info.plist, starting
+    /// the updater would just raise an error alert on every launch. The menu item
+    /// is hidden to match (see `.commands`).
     private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        startingUpdater: AppChannel.isProduction, updaterDelegate: nil, userDriverDelegate: nil)
 
     init() {
         // CompanionAuth + SupportReporter must share the same CompanionSettings
@@ -242,8 +248,12 @@ struct ConsoleForgeApp: App {
         .defaultSize(width: 1200, height: 800)
         .commands {
             // "Check for Updates…" under the app menu, right after the About item.
+            // Production only — beta has no feed to check and must never replace
+            // itself with the shipping release.
             CommandGroup(after: .appInfo) {
-                CheckForUpdatesView(updater: updaterController.updater)
+                if AppChannel.isProduction {
+                    CheckForUpdatesView(updater: updaterController.updater)
+                }
             }
 
             CommandGroup(replacing: .newItem) {

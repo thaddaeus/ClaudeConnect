@@ -20,6 +20,52 @@ swift build
 swift run
 ```
 
+### Beta channel (preferred for iteration)
+
+`scripts/beta.sh` builds and signs a **separate** `/Applications/ConsoleForge Beta.app`
+that runs side by side with production and cannot touch its state. Use it instead of
+`dev.sh` whenever production has real sessions open — it never quits, pkills, or writes
+to `/Applications/ConsoleForge.app`.
+
+```bash
+./scripts/beta.sh              # release build, relaunch beta
+./scripts/beta.sh debug        # faster debug build
+./scripts/beta.sh --no-launch  # build + install, leave the app closed
+```
+
+**No notarization.** Gatekeeper only blocks bundles carrying the `com.apple.quarantine`
+xattr, which is set on *download* — a locally built app never has it. So beta is
+build + sign (seconds), not the `notarytool --wait` round trip. `spctl -a` still reports
+"rejected / Unnotarized Developer ID" because it assesses as-if-downloaded; that is not
+the check the launch path runs. Signing is still mandatory, for the Keychain reason in
+`dev.sh`'s header — a stable Developer ID keeps the designated requirement constant.
+
+Beta diverges from production in five places. The bundle id is the master key; the app
+derives the rest from it in `AppChannel.swift`:
+
+| Divergence | Production | Beta |
+| ---------- | ---------- | ---- |
+| Bundle id | `com.thaddaeus.ConsoleForge` | `com.thaddaeus.ConsoleForge.beta` |
+| App | `/Applications/ConsoleForge.app` | `/Applications/ConsoleForge Beta.app` |
+| Support dir | `~/Library/Application Support/ConsoleForge` | `…/ConsoleForge Beta` |
+| Keychain service | `com.thaddaeus.ConsoleForge` | `com.thaddaeus.ConsoleForge.beta` |
+| Sparkle | live feed, auto-checks on | no feed, updater never started |
+
+A different bundle id alone is **not** enough: `sessions.json`, `commands/`, and `events/`
+used to hardcode the literal string `"ConsoleForge"`, so a beta would still have written
+into production's tree. Anything that is not exactly the production bundle id — including
+an unbundled `swift run`, whose identifier is nil — is treated as non-production.
+
+`consoleforge-tab` picks its target the same way: explicit `--app prod|beta` wins,
+otherwise `$CONSOLEFORGE_APP_SUPPORT` (exported by whichever app owns the tab), otherwise
+production. That env var is what makes it deterministic — `~/.local/bin/consoleforge-tab`
+comes before the bundle's own copy on `PATH`, so the file on disk can't identify the channel.
+
+Beta's icon is the production icon hue-rotated (orange → cyan). Regenerate it with
+`python3 scripts/make-beta-icon.py` if `AppIcon.icns` is ever redesigned.
+
+### Production hot-swap
+
 Hot-swap the running app without a full release — **always use `scripts/dev.sh`**:
 ```bash
 ./scripts/dev.sh           # release config (default)
