@@ -116,6 +116,44 @@ export DEV_ID_APPLICATION="Developer ID Application: ..."
 - Do not `gh release create` outside the script — use `--release`
 - Do not skip any step for "quick" releases — every release must be signed AND notarized
 
+## Workspace slot layout
+
+The detail area is a **slot container** (`Views/Workspace/WorkspaceView.swift`), not a
+single pane. SLOTS are fixed named positions (`left`, `center`, `right`, laid out
+left → right); SECTIONS (`console`, `browser`) are movable content dropped into them.
+Layout is per-**window**, not per-tab — switching console tabs never rearranges it.
+Persisted to `layout.json` beside `sessions.json`, so a bad layout can be deleted
+without touching sessions.
+
+Every slot decides independently — pinning is combinatorial, not one global policy:
+
+| Property | Values |
+| -------- | ------ |
+| size | PINNED (an explicit fraction **of the window**) or FLEXIBLE (absorbs leftover) |
+| display | TILED (consumes layout space) or FLOATING (overlays, consumes none) |
+
+Size arithmetic lives in `WorkspaceLayout.resolve(in:)` and is the whole point of the
+feature — *the console must not resize when a browser closes*:
+
+- A pinned fraction is of the WINDOW, so it survives a sibling closing.
+- Leftover after pins splits evenly among flexible slots.
+- With **no** flexible slot the leftover stays EMPTY. Nothing stretches into it.
+  That empty space is placed back at the slots that gave it up (a floating slot leaves
+  its former width as a gap), so pinned tiles do not move when a neighbour floats.
+- Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.
+
+**The load-bearing rule (tasks 9543 / 9487 — permanent terminal garble is SwiftTerm
+BUFFER MODEL corruption from reflowing at a wrong size):** every section is rendered
+exactly once at a structurally fixed position in the workspace ZStack and moved only by
+changing `.frame` + `.offset`. Nothing is ever re-parented, so `TerminalContainerView`
+keeps its identity across every move / pin / float / splitter drag, and the console's
+container NSView reports its new bounds through the *existing* `frameDidChange` →
+`TerminalSessionManager.setSize` path with its 140 ms trailing debounce. Never set a
+frame on a terminal view, never animate a slot rect, and never add a second resize path.
+Watch for `if/else` in the view tree around a section (that is what
+`FloatingDecoration` avoids) — a `_ConditionalContent` swap changes structural identity
+and rebuilds the hosted NSView.
+
 ## Key Design Decisions
 - Terminal views are kept alive in a ZStack (hidden via AppKit isHidden) to preserve running processes when switching tabs
 - Sessions persist to `~/Library/Application Support/ConsoleForge/sessions.json`
