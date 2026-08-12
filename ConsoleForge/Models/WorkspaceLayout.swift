@@ -415,17 +415,19 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // getting narrow must never hide your last panel.)
         var collapsed = Set(slots.filter { $0.section != nil && !$0.isFloating && $0.isCollapsed }.map(\.id))
 
-        // Forced-collapse pass, now per ROW: a slot is starved by its own row's width,
-        // not by the whole window. Bounded by the slot count.
+        // The rail stripe is ALWAYS reserved, whether or not anything is collapsed.
+        // Sizing it to the collapsed set made the whole layout jump — every panel
+        // resized the moment one collapsed or expanded, which is exactly what pinning
+        // exists to prevent. A permanent gutter costs 34pt once and keeps the geometry
+        // stable through every collapse; it is also where further controls will go.
+        let stripeWidth = WorkspaceLayout.collapsedRailWidth
+        let contentWidth = max(0, size.width - stripeWidth)
+
+        // Forced-collapse pass, per ROW: a slot is starved by its own row's width, not
+        // by the whole window. Bounded by the slot count.
         var widths: [SlotID: CGFloat] = [:]
         var heights: [SlotRow: CGFloat] = [:]
-        var stripeWidth: CGFloat = 0
-        var contentWidth: CGFloat = size.width
         while true {
-            stripeWidth = (collapsed.isEmpty && floatingCollapsed.isEmpty)
-                ? 0 : WorkspaceLayout.collapsedRailWidth
-            contentWidth = max(0, size.width - stripeWidth)
-
             let liveRows = SlotRow.allCases.filter { row in
                 slots(in: row).contains { slot in
                     (slot.section != nil && !slot.isFloating && !collapsed.contains(slot.id))
