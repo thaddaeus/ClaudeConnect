@@ -13,10 +13,6 @@ struct SectionHeaderView: View {
     /// Set while this header is the drag source, so the workspace can raise its
     /// slot drop targets. Unused while floating.
     @Binding var draggingSection: SectionKind?
-    /// Collapsed-rail variant: same controls, minus the ones that do not fit — the
-    /// close button and the size badge — so the rail stays as narrow as it can while
-    /// keeping every button a real hit target.
-    var isCompact: Bool = false
     var body: some View {
         // One drag behaviour in every state. A floating panel is docked to its slot's
         // edge, so dragging its header into another slot RE-ANCHORS it — which is the
@@ -42,7 +38,7 @@ struct SectionHeaderView: View {
 
             pinToggle
 
-            if !isCompact { sizeBadge }
+            sizeBadge
 
             Spacer(minLength: 4)
 
@@ -58,7 +54,7 @@ struct SectionHeaderView: View {
             .menuIndicator(.hidden)
             .frame(width: 22)
 
-            if kind.isClosable && !isCompact {
+            if kind.isClosable {
                 Button {
                     layout.close(kind)
                 } label: {

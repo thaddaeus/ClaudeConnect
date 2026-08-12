@@ -199,11 +199,11 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     static let minSlotWidth: CGFloat = 240
     /// Width of the rail a collapsed section leaves behind.
     ///
-    /// Wide enough to carry the section's real header chrome, because the rail is the
-    /// only way back and a 22pt strip made those buttons impossible to hit. A collapsed
-    /// panel keeps its controls — pin, Collapse/Normal/Full Width, menu — and loses only
-    /// its content.
-    static let collapsedRailWidth: CGFloat = 152
+    /// A slim vertical strip — the rail is the only way back, so its controls have to
+    /// be real hit targets, but they stack DOWN it rather than across. 22pt was too
+    /// narrow to click; laying the horizontal header out sideways instead cost 152pt
+    /// and read as a large empty panel. Stacked, 34pt buys full-size targets.
+    static let collapsedRailWidth: CGFloat = 34
 
     // MARK: - Size arithmetic
 

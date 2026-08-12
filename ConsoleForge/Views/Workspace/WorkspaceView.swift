@@ -187,45 +187,62 @@ struct WorkspaceView: View {
     // MARK: - Collapsed rails
 
     /// A section that cannot reach its minimum width is not rendered — but it is not
-    /// gone either, and it keeps its controls. The rail carries the section's real
-    /// header (pin, Collapse/Normal/Full Width, menu) above a click-anywhere expand
-    /// area, so a collapsed panel is somewhere you can act from rather than a dead
-    /// strip. Without it, dragging a splitter too far would take the splitter with it
-    /// and strand the section in the menus.
+    /// gone, and it keeps its controls. The rail stacks them DOWN a slim strip: expand,
+    /// then the full layout menu, then the section's name running vertically, with the
+    /// whole strip clickable to expand. Stacking is what makes 34pt enough — the same
+    /// controls laid out horizontally needed 152pt and read as a large empty panel.
     @ViewBuilder
     private func collapsedRails(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         ForEach(SlotID.allCases) { id in
             if let rect = resolved.collapsed[id], let kind = layout[id].section {
                 VStack(spacing: 0) {
-                    SectionHeaderView(
-                        kind: kind,
-                        slot: layout[id],
-                        layout: layout,
-                        currentFraction: layout[id].pinnedFraction,
-                        draggingSection: $draggingSection,
-                        isCompact: true
-                    )
+                    Button {
+                        layout.normal(id)
+                    } label: {
+                        Image(systemName: id.floatsToTrailingEdge
+                              ? "chevron.compact.left" : "chevron.compact.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: rect.width, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Expand \(kind.title)")
 
+                    Menu {
+                        SectionLayoutMenu(kind: kind, layout: layout)
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 11))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(width: rect.width, height: 26)
+
+                    Divider().padding(.horizontal, 6)
+
+                    // The name runs down the rail, JetBrains-style, and doubles as the
+                    // click target for the rest of the strip.
                     Button {
                         layout.normal(id)
                     } label: {
                         VStack(spacing: 8) {
-                            Spacer()
                             Image(systemName: kind.symbol)
-                                .font(.system(size: 16))
+                                .font(.system(size: 13))
                             Text(kind.title)
                                 .font(.system(size: 10, weight: .medium))
-                            Image(systemName: id.floatsToTrailingEdge
-                                  ? "chevron.compact.left" : "chevron.compact.right")
-                                .font(.system(size: 12))
-                            Spacer()
+                                .fixedSize()
+                                .rotationEffect(.degrees(90))
+                                .frame(width: rect.width)
+                                .padding(.vertical, 18)
+                            Spacer(minLength: 0)
                         }
+                        .padding(.top, 10)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
                 }
+                .foregroundStyle(.secondary)
                 .frame(width: rect.width, height: rect.height)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .overlay(alignment: id.floatsToTrailingEdge ? .leading : .trailing) { Divider() }
