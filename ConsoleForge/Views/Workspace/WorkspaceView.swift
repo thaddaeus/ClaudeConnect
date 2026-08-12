@@ -35,6 +35,10 @@ struct WorkspaceView: View {
                 Color(nsColor: .underPageBackgroundColor)
                     .frame(width: size.width, height: size.height)
 
+                if resolved.tiled.isEmpty && resolved.floating.isEmpty {
+                    allCollapsedHint(resolved, size)
+                }
+
                 consoleSection(resolved, size)
 
                 if layout.isOpen(.browser) {
@@ -136,6 +140,23 @@ struct WorkspaceView: View {
         // No .animation here on purpose: an animated slot rect would emit a frame per
         // tick straight into the terminal resize path.
         .zIndex(slot.isFloating ? 10 : 0)
+    }
+
+    /// Everything is collapsed into the stripe. Say so, rather than showing a blank
+    /// window that reads as a crash.
+    private func allCollapsedHint(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: "sidebar.trailing")
+                .font(.system(size: 28))
+                .foregroundStyle(.tertiary)
+            Text("All panels are collapsed")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("Pick one from the rail on the right to bring it back.")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(width: max(0, size.width - resolved.railStripeWidth), height: size.height)
     }
 
     // MARK: - Reserved gaps

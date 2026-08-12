@@ -249,14 +249,14 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
         }
 
-        // Slots the user collapsed on purpose start out collapsed. Never leave the
-        // window with nothing in it — the console (failing that, the first tiled slot)
-        // always survives.
+        // Slots the user collapsed on purpose start out collapsed — including the last
+        // one. There used to be a "never leave the window empty" guard here that quietly
+        // un-collapsed the console, which meant the collapse button did NOTHING whenever
+        // the console was the only tiled section. A rail is always present and always
+        // reversible, so an all-collapsed workspace is a legitimate place to be, not a
+        // dead end. (The FORCED-collapse loop below keeps its own guard: a window merely
+        // getting narrow must never hide your last panel.)
         var collapsed = Set(allTiled.filter(\.isCollapsed).map(\.id))
-        if collapsed.count == allTiled.count,
-           let keep = allTiled.first(where: { $0.section == .console }) ?? allTiled.first {
-            collapsed.remove(keep.id)
-        }
 
         // Forced-collapse pass: widen the collapsed set one slot at a time until every
         // surviving slot clears its floor. Bounded by the slot count, so at most a
