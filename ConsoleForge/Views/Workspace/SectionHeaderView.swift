@@ -194,9 +194,9 @@ struct SectionLayoutMenu: View {
     var body: some View {
         if let slot = layout.slot(holding: kind) {
             if kind == .browser {
-                // The inspector opens as its own WebKit window; there is no public API
-                // to host it in a slot. Right-click in the page also works.
-                Text("Inspector: Safari ▸ Develop ▸ this Mac ▸ ConsoleForge")
+                // The inspector is only reachable from Safari, and opens as its own
+                // WebKit window — there is no public API to host it in a slot.
+                Text("Inspector: open in Safari, then Develop ▸ Show Web Inspector")
                 Divider()
             }
             Menu("Move to") {

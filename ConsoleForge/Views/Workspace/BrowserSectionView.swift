@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WebKit
 
@@ -22,26 +23,18 @@ final class BrowserModel {
     init(initialURL: String?) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
-        // Developer extras must be on the configuration BEFORE the web view is built
-        // from it — see the note below on the two inspector switches.
-        if WKPreferences.instancesRespond(to: NSSelectorFromString("_setDeveloperExtrasEnabled:")) {
-            configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        }
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-        // Web Inspector takes TWO different switches, and only together do they give a
-        // usable dev surface rather than a viewer.
+        // Web Inspector, the SUPPORTED way (macOS 13.3+): this exposes the view to
+        // Safari ▸ Develop ▸ <this Mac> ▸ ConsoleForge. It deliberately adds no
+        // "Inspect Element" to the web view's own context menu — see
+        // webkit.org/blog/13936.
         //
-        // `isInspectable` (macOS 13.3+) is the SUPPORTED opt-in, but all it does is
-        // expose the view to Safari ▸ Develop ▸ <this Mac> ▸ ConsoleForge. It
-        // deliberately adds no "Inspect Element" to the web view's own context menu —
-        // see webkit.org/blog/13936.
-        //
-        // The context-menu item comes from WebKit's private developer-extras
-        // preference. ConsoleForge ships via Developer ID, not the App Store, so a
-        // private preference is a reasonable trade for right-click-to-inspect. Guarded
-        // on the setter actually existing: an unknown KVC key raises an Objective-C
-        // exception that Swift cannot catch, so an unguarded `setValue` would turn a
-        // future WebKit removal into a hard crash instead of a missing menu item.
+        // WebKit's private developer-extras preference DOES add that menu item, and it
+        // was tried here. Don't: clicking it makes WebKit dock an inspector inside the
+        // web view, which a third-party host cannot actually render — the page is
+        // squashed into the top of the panel and the rest goes dead. A menu item that
+        // breaks the panel is worse than no menu item. Safari's Develop menu is the
+        // route that works, and "Open in Safari" below is the one-click way there.
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = true
 
@@ -81,6 +74,19 @@ final class BrowserModel {
         guard let url = Self.normalizedURL(text) else { return }
         addressText = url.absoluteString
         webView.load(URLRequest(url: url))
+    }
+
+    /// Hand the current page to Safari. Web Inspector for an embedded WKWebView is
+    /// only reachable from Safari's Develop menu, so this is the shortest path to real
+    /// dev tools. Targets Safari specifically, not the default browser, for that reason.
+    func openInSafari() {
+        guard let url = webView.url ?? Self.normalizedURL(addressText) else { return }
+        if let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") {
+            NSWorkspace.shared.open([url], withApplicationAt: safari,
+                                    configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func submitAddress() { load(addressText) }
@@ -133,6 +139,14 @@ struct BrowserSectionView: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11))
                 .onSubmit { model.submitAddress() }
+
+            // The inspector can only be driven from Safari (see BrowserModel.init), so
+            // hand the page over in one click rather than making it a copy-paste.
+            Button(action: model.openInSafari) {
+                Image(systemName: "safari")
+            }
+            .disabled(model.currentURL == nil)
+            .help("Open this page in Safari — then Develop ▸ Show Web Inspector")
         }
         .buttonStyle(.borderless)
         .font(.system(size: 11))
