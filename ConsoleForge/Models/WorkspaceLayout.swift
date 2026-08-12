@@ -197,9 +197,13 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     static let minPinnedFraction: Double = 0.02
     /// Fallback floor for a section that declares no minimum of its own.
     static let minSlotWidth: CGFloat = 240
-    /// Width of the rail a collapsed section leaves behind — enough for its glyph, and
-    /// the only way back, so a section can never be shrunk into oblivion.
-    static let collapsedRailWidth: CGFloat = 22
+    /// Width of the rail a collapsed section leaves behind.
+    ///
+    /// Wide enough to carry the section's real header chrome, because the rail is the
+    /// only way back and a 22pt strip made those buttons impossible to hit. A collapsed
+    /// panel keeps its controls — pin, Collapse/Normal/Full Width, menu — and loses only
+    /// its content.
+    static let collapsedRailWidth: CGFloat = 152
 
     // MARK: - Size arithmetic
 

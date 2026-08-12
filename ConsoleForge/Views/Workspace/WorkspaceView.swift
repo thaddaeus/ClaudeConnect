@@ -187,33 +187,48 @@ struct WorkspaceView: View {
     // MARK: - Collapsed rails
 
     /// A section that cannot reach its minimum width is not rendered — but it is not
-    /// gone either. It leaves a rail carrying its glyph, which is both the signal that
-    /// it is still there and the way back. Without this, dragging a splitter too far
-    /// would take the splitter with it and strand the section in the menus.
+    /// gone either, and it keeps its controls. The rail carries the section's real
+    /// header (pin, Collapse/Normal/Full Width, menu) above a click-anywhere expand
+    /// area, so a collapsed panel is somewhere you can act from rather than a dead
+    /// strip. Without it, dragging a splitter too far would take the splitter with it
+    /// and strand the section in the menus.
     @ViewBuilder
     private func collapsedRails(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         ForEach(SlotID.allCases) { id in
             if let rect = resolved.collapsed[id], let kind = layout[id].section {
-                Button {
-                    layout.normal(id)
-                } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: kind.symbol)
-                            .font(.system(size: 11))
-                        // Points the way the panel will expand, which depends on the
-                        // edge it is docked to.
-                        Image(systemName: id.floatsToTrailingEdge ? "chevron.compact.left" : "chevron.compact.right")
-                            .font(.system(size: 9))
-                        Spacer()
+                VStack(spacing: 0) {
+                    SectionHeaderView(
+                        kind: kind,
+                        slot: layout[id],
+                        layout: layout,
+                        currentFraction: layout[id].pinnedFraction,
+                        draggingSection: $draggingSection,
+                        isCompact: true
+                    )
+
+                    Button {
+                        layout.normal(id)
+                    } label: {
+                        VStack(spacing: 8) {
+                            Spacer()
+                            Image(systemName: kind.symbol)
+                                .font(.system(size: 16))
+                            Text(kind.title)
+                                .font(.system(size: 10, weight: .medium))
+                            Image(systemName: id.floatsToTrailingEdge
+                                  ? "chevron.compact.left" : "chevron.compact.right")
+                                .font(.system(size: 12))
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.top, 6)
-                    .frame(width: rect.width, height: rect.height)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .overlay(alignment: id.floatsToTrailingEdge ? .leading : .trailing) { Divider() }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .frame(width: rect.width, height: rect.height)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .overlay(alignment: id.floatsToTrailingEdge ? .leading : .trailing) { Divider() }
                 .help(collapsedHelp(kind))
                 .offset(x: rect.minX, y: rect.minY)
                 // A floating panel's rail overlays too — it must sit above the tiled
@@ -227,7 +242,7 @@ struct WorkspaceView: View {
         let reason = kind == .console
             ? "narrower than a standard \(TerminalMetrics.standardColumns)-column terminal"
             : "too narrow to show"
-        return "\(kind.title) is hidden — \(reason). Click to restore."
+        return "\(kind.title) is collapsed — \(reason). Click to restore, or use the controls above."
     }
 
     // MARK: - Splitters

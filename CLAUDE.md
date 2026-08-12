@@ -159,8 +159,11 @@ feature — *the console must not resize when a browser closes*:
 - A FLOATING slot contributes nothing to this arithmetic — the tiled layout resolves
   exactly as if that section did not exist.
 - Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.
-- A slot that cannot reach its section's minimum width **collapses to a 22pt rail**
-  rather than rendering a useless sliver. The console's minimum is a standard
+- A slot that cannot reach its section's minimum width **collapses to a rail** rather
+  than rendering a useless sliver. The rail is chrome-width (152pt), not a thin strip:
+  it carries the section's real header — pin, Collapse/Normal/Full Width, menu — over a
+  click-anywhere expand area, so a collapsed panel is somewhere you can act from. A
+  22pt strip made those buttons impossible to hit. The console's minimum is a standard
   **80 columns** (`TerminalMetrics.minimumWidth` — measured from the live font, ≈544pt
   at Menlo 11pt), because output written to wrap at 80 wraps mid-word below that. The
   last remaining tiled slot never collapses. Clicking the rail restores the slot.
