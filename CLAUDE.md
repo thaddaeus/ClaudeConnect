@@ -154,6 +154,8 @@ feature — *the console must not resize when a browser closes*:
   Safari was" is just the slot, still pinned. Dropping any section there fills it
   exactly; a flexible neighbour cannot swallow it; right-click releases it. The header's
   pin button pins a section at its *current* width, which is how a gap gets made.
+  **Closing** a pinned section holds its space; **moving** one releases it — a move is
+  repositioning, not reserving, and a phantom gap would shove everything sideways.
 - Any leftover beyond the pins stays EMPTY at the trailing edge. Nothing stretches
   into it.
 - A FLOATING slot contributes nothing to this arithmetic — the tiled layout resolves

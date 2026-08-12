@@ -186,27 +186,45 @@ struct WorkspaceView: View {
 
     // MARK: - Collapsed rails
 
-    /// A section that cannot reach its minimum width is not rendered — but it is not
-    /// gone, and it keeps its controls. The rail stacks them DOWN a slim strip: expand,
-    /// then the full layout menu, then the section's name running vertically, with the
-    /// whole strip clickable to expand. Stacking is what makes 34pt enough — the same
-    /// controls laid out horizontally needed 152pt and read as a large empty panel.
+    /// Collapsed sections become tabs in one stripe down the RIGHT edge, wherever their
+    /// slot sits — the way an IDE parks its tool windows. The stripe is reserved space
+    /// (see `railStripeWidth`), so nothing is ever drawn underneath a tab and its menu
+    /// button cannot end up clipped by the window edge.
     @ViewBuilder
     private func collapsedRails(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        if resolved.railStripeWidth > 0 {
+            Rectangle()
+                .fill(Color(nsColor: .underPageBackgroundColor))
+                .frame(width: resolved.railStripeWidth, height: size.height)
+                .overlay(alignment: .leading) { Divider() }
+                .offset(x: size.width - resolved.railStripeWidth)
+                .zIndex(13)
+        }
         ForEach(SlotID.allCases) { id in
             if let rect = resolved.collapsed[id], let kind = layout[id].section {
-                VStack(spacing: 0) {
+                VStack(spacing: 6) {
                     Button {
                         layout.normal(id)
                     } label: {
-                        Image(systemName: id.floatsToTrailingEdge
-                              ? "chevron.compact.left" : "chevron.compact.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .frame(width: rect.width, height: 30)
-                            .contentShape(Rectangle())
+                        VStack(spacing: 6) {
+                            Image(systemName: "chevron.compact.left")
+                                .font(.system(size: 12, weight: .semibold))
+                            Image(systemName: kind.symbol)
+                                .font(.system(size: 13))
+                            Text(kind.title)
+                                .font(.system(size: 10, weight: .medium))
+                                .fixedSize()
+                                .rotationEffect(.degrees(90))
+                                .frame(width: rect.width)
+                                .padding(.vertical, 16)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Expand \(kind.title)")
+
+                    Spacer(minLength: 0)
 
                     Menu {
                         SectionLayoutMenu(kind: kind, layout: layout)
@@ -216,41 +234,19 @@ struct WorkspaceView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
-                    .frame(width: rect.width, height: 26)
-
-                    Divider().padding(.horizontal, 6)
-
-                    // The name runs down the rail, JetBrains-style, and doubles as the
-                    // click target for the rest of the strip.
-                    Button {
-                        layout.normal(id)
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: kind.symbol)
-                                .font(.system(size: 13))
-                            Text(kind.title)
-                                .font(.system(size: 10, weight: .medium))
-                                .fixedSize()
-                                .rotationEffect(.degrees(90))
-                                .frame(width: rect.width)
-                                .padding(.vertical, 18)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.top, 10)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                    .frame(width: rect.width, height: 22)
+                    .help("\(kind.title) layout options")
                 }
+                .padding(.vertical, 8)
                 .foregroundStyle(.secondary)
                 .frame(width: rect.width, height: rect.height)
                 .background(Color(nsColor: .windowBackgroundColor))
-                .overlay(alignment: id.floatsToTrailingEdge ? .leading : .trailing) { Divider() }
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .padding(.horizontal, 2)
+                .contextMenu { SectionLayoutMenu(kind: kind, layout: layout) }
                 .help(collapsedHelp(kind))
                 .offset(x: rect.minX, y: rect.minY)
-                // A floating panel's rail overlays too — it must sit above the tiled
-                // sections, not get painted under them.
-                .zIndex(layout[id].isFloating ? 12 : 4)
+                .zIndex(14)
             }
         }
     }

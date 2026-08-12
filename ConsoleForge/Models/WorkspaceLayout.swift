@@ -199,11 +199,17 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     static let minSlotWidth: CGFloat = 240
     /// Width of the rail a collapsed section leaves behind.
     ///
-    /// A slim vertical strip — the rail is the only way back, so its controls have to
-    /// be real hit targets, but they stack DOWN it rather than across. 22pt was too
-    /// narrow to click; laying the horizontal header out sideways instead cost 152pt
-    /// and read as a large empty panel. Stacked, 34pt buys full-size targets.
+    /// Width of the RAIL STRIPE down the right edge. Every collapsed section — from any
+    /// slot, tiled or floating — becomes a tab in this one stripe, the way an IDE's tool
+    /// windows do. One stripe, not one strip per slot, so collapsing more panels never
+    /// eats more width.
+    ///
+    /// The stripe is reserved space: the tiled layout, the gaps and the floating
+    /// overlays all stop at its leading edge, so "full width" means full width of the
+    /// content area and nothing is ever drawn underneath a rail.
     static let collapsedRailWidth: CGFloat = 34
+    /// Height of one tab in the stripe, stacked from the top.
+    static let collapsedRailHeight: CGFloat = 148
 
     // MARK: - Size arithmetic
 
@@ -237,29 +243,11 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // Empty + pinned = a reserved gap. Never collapses, never floored: a hole is
         // allowed to be any size the user set it to.
         let gaps = slots.filter { $0.section == nil && $0.isPinned }
+        let floatingCollapsed = Set(occupied.filter { $0.isFloating && $0.isCollapsed }.map(\.id))
 
         func floorWidth(_ slot: SlotConfiguration) -> CGFloat {
             slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
         }
-        func anchored(_ id: SlotID, width: CGFloat) -> CGRect {
-            CGRect(x: id.floatsToTrailingEdge ? size.width - width : 0,
-                   y: 0, width: width, height: size.height)
-        }
-
-        // Floating slots overlay the tiled ones at full height, docked to their slot's
-        // edge, and consume no layout space in ANY state — collapsed included. Nothing
-        // here touches the tiled arithmetic below, which is the point: toggling or
-        // resizing a floating panel must never move what is underneath it.
-        for slot in occupied where slot.isFloating {
-            if slot.isCollapsed {
-                result.collapsed[slot.id] = anchored(slot.id, width: WorkspaceLayout.collapsedRailWidth)
-            } else {
-                let width = min(max(CGFloat(slot.pinnedFraction) * size.width, floorWidth(slot)), size.width)
-                result.floating[slot.id] = anchored(slot.id, width: width)
-            }
-        }
-
-        guard !allTiled.isEmpty else { return result }
 
         // Slots the user collapsed on purpose start out collapsed. Never leave the
         // window with nothing in it — the console (failing that, the first tiled slot)
@@ -272,16 +260,22 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
 
         // Forced-collapse pass: widen the collapsed set one slot at a time until every
         // surviving slot clears its floor. Bounded by the slot count, so at most a
-        // couple of iterations.
+        // couple of iterations. The stripe costs the same whether one panel is collapsed
+        // or three, so it is re-read each round rather than counted per rail.
         var widths: [SlotID: CGFloat] = [:]
+        var stripeWidth: CGFloat = 0
         while true {
+            stripeWidth = (collapsed.isEmpty && floatingCollapsed.isEmpty)
+                ? 0 : WorkspaceLayout.collapsedRailWidth
             let active = allTiled.filter { !collapsed.contains($0.id) }
-            widths = tileWidths(active: active, gaps: gaps, railCount: collapsed.count, size: size)
+            widths = tileWidths(active: active, gaps: gaps, stripeWidth: stripeWidth, size: size)
             guard active.count > 1,
                   let starved = active.first(where: { (widths[$0.id] ?? 0) + 0.5 < floorWidth($0) })
             else { break }
             collapsed.insert(starved.id)
         }
+        let contentWidth = max(0, size.width - stripeWidth)
+        result.railStripeWidth = stripeWidth
 
         // The loop above stops before collapsing the last slot standing, which left a
         // hole: a lone console still pinned at a tiny fraction (a leftover from a
@@ -292,23 +286,25 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // are untouched, so a lone 50% pin still leaves 50% empty (rule 3).
         let survivors = allTiled.filter { !collapsed.contains($0.id) }
         if survivors.count == 1, let only = survivors.first {
-            let reserved = CGFloat(collapsed.count) * WorkspaceLayout.collapsedRailWidth
-                + gaps.reduce(0) { $0 + (widths[$1.id] ?? 0) }
-            widths[only.id] = min(max(widths[only.id] ?? 0, floorWidth(only)), max(0, size.width - reserved))
+            let reserved = gaps.reduce(0) { $0 + (widths[$1.id] ?? 0) }
+            widths[only.id] = min(max(widths[only.id] ?? 0, floorWidth(only)),
+                                  max(0, contentWidth - reserved))
+        }
+
+        // Floating slots overlay the tiled ones at full height, docked to their slot's
+        // edge, and consume no layout space. They live INSIDE the content area — a
+        // full-width overlay stops at the rail stripe rather than running under it.
+        for slot in occupied where slot.isFloating && !slot.isCollapsed {
+            let width = min(max(CGFloat(slot.pinnedFraction) * size.width, floorWidth(slot)), contentWidth)
+            let x = slot.id.floatsToTrailingEdge ? contentWidth - width : 0
+            result.floating[slot.id] = CGRect(x: x, y: 0, width: width, height: size.height)
         }
 
         var x: CGFloat = 0
         var previousTiled: SlotID?
         for id in SlotID.allCases {
-            if collapsed.contains(id) {
-                result.collapsed[id] = CGRect(x: x, y: 0,
-                                              width: WorkspaceLayout.collapsedRailWidth,
-                                              height: size.height)
-                x += WorkspaceLayout.collapsedRailWidth
-                previousTiled = nil          // a rail breaks adjacency: no splitter across it
-                continue
-            }
-            guard let width = widths[id] else { continue }
+            // Collapsed sections are tabs in the stripe, not positions in the flow.
+            guard !collapsed.contains(id), let width = widths[id] else { continue }
             if self[id].section == nil {
                 // A reserved gap: real layout space, owned by a slot, holding a
                 // position open. Not a section, so no splitter runs across it.
@@ -324,7 +320,16 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             x += width
             previousTiled = id
         }
-        result.emptyTrailingWidth = max(0, size.width - x)
+        result.emptyTrailingWidth = max(0, contentWidth - x)
+
+        // The stripe: every collapsed section, wherever its slot sits, stacked as tabs
+        // down the right edge.
+        var y: CGFloat = 0
+        for id in SlotID.allCases where collapsed.contains(id) || floatingCollapsed.contains(id) {
+            let height = min(WorkspaceLayout.collapsedRailHeight, max(0, size.height - y))
+            result.collapsed[id] = CGRect(x: contentWidth, y: y, width: stripeWidth, height: height)
+            y += height
+        }
         return result
     }
 
@@ -334,11 +339,13 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     /// Falling short of the floor is what the collapse pass acts on instead.
     private func tileWidths(active: [SlotConfiguration],
                             gaps: [SlotConfiguration],
-                            railCount: Int,
+                            stripeWidth: CGFloat,
                             size: CGSize) -> [SlotID: CGFloat] {
         guard !active.isEmpty || !gaps.isEmpty else { return [:] }
-        // Rails come off the top; the rest of the window is what fractions divide.
-        let usable = max(0, Double(size.width) - Double(railCount) * Double(WorkspaceLayout.collapsedRailWidth))
+        // The rail stripe comes off the top; the rest of the window is what fractions
+        // divide. Fractions stay OF THE WINDOW, so a pinned 50% is still 50% — only the
+        // budget they have to fit inside shrinks.
+        let usable = max(0, Double(size.width) - Double(stripeWidth))
         let budget = usable / Double(size.width)
 
         let flexible = active.filter { !$0.isPinned }
@@ -384,6 +391,9 @@ struct ResolvedWorkspaceLayout: Equatable {
     var tiled: [SlotID: CGRect] = [:]
     /// Frames for occupied, floating slots (overlaid; consume no layout space).
     var floating: [SlotID: CGRect] = [:]
+    /// Width of the right-edge rail stripe, 0 when nothing is collapsed. Everything
+    /// else is laid out to the left of it.
+    var railStripeWidth: CGFloat = 0
     /// Reserved empty space owned by a pinned, sectionless slot — a hole held open for
     /// a panel that is not there yet, and a drop target that fills it exactly.
     var gaps: [SlotID: CGRect] = [:]

@@ -83,7 +83,15 @@ final class LayoutStore {
         layout[target].section = section
         layout[source.id].section = displaced
         if displaced?.canFloat == false { layout[source.id].isFloating = false }
-        if layout[source.id].section == nil { layout[source.id].isFloating = false }
+        if layout[source.id].section == nil {
+            layout[source.id].isFloating = false
+            // Moving a panel is repositioning it, not reserving where it used to be —
+            // leaving the vacated slot pinned would strand a phantom gap and shove
+            // everything else sideways. Closing a pinned section still holds its space
+            // (see `close`); that is the deliberate way to keep a hole.
+            layout[source.id].isPinned = false
+            layout[source.id].isCollapsed = false
+        }
         commit()
     }
 
