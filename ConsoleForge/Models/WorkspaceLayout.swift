@@ -535,13 +535,35 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
                                        width: parkedWidth, height: parkedHeight)
         }
 
-        // The stripe: every collapsed section, wherever its slot sits, stacked as tabs
-        // down the right edge. One stripe for the whole grid, not one per row.
-        var tabY: CGFloat = 0
-        for id in SlotID.allCases where collapsed.contains(id) || floatingCollapsed.contains(id) {
-            let height = min(WorkspaceLayout.collapsedRailHeight, max(0, size.height - tabY))
-            result.collapsed[id] = CGRect(x: contentWidth, y: tabY, width: stripeWidth, height: height)
-            tabY += height
+        // The stripe: one for the whole grid, but BANDED BY ROW. A collapsed bottom-row
+        // section parks in the lower band, aligned with the row it came from — stacked
+        // in with the top row's tabs there was no way to tell where it had come from.
+        // When the bottom row has no height of its own (everything in it is collapsed),
+        // the band still starts halfway down, so the grouping reads either way.
+        let bandStart: [SlotRow: CGFloat] = {
+            if let topHeight = heights[.top], heights[.bottom] != nil, topHeight > 0 {
+                return [.top: 0, .bottom: topHeight]
+            }
+            return [.top: 0, .bottom: size.height / 2]
+        }()
+        result.railBandStart = bandStart
+
+        let tabs = SlotID.allCases.filter { collapsed.contains($0) || floatingCollapsed.contains($0) }
+        for row in SlotRow.allCases {
+            let inBand = tabs.filter { $0.row == row }
+            guard !inBand.isEmpty else { continue }
+            let start = bandStart[row] ?? 0
+            let end = row == .top ? (bandStart[.bottom] ?? size.height) : size.height
+            let available = max(0, end - start)
+            // Shrink tabs to fit their band rather than letting one band bleed into the
+            // other, which would put the grouping back where it started.
+            let tabHeight = min(WorkspaceLayout.collapsedRailHeight, available / CGFloat(inBand.count))
+            var tabY = start
+            for id in inBand {
+                result.collapsed[id] = CGRect(x: contentWidth, y: tabY,
+                                              width: stripeWidth, height: tabHeight)
+                tabY += tabHeight
+            }
         }
         return result
     }
@@ -673,6 +695,9 @@ struct ResolvedWorkspaceLayout: Equatable {
     /// Width of the right-edge rail stripe, 0 when nothing is collapsed. Everything
     /// else is laid out to the left of it.
     var railStripeWidth: CGFloat = 0
+    /// Where each row's band of tabs begins inside the stripe, so a collapsed section
+    /// sits level with the row it came from.
+    var railBandStart: [SlotRow: CGFloat] = [:]
     /// Reserved empty space owned by a pinned, sectionless slot — a hole held open for
     /// a panel that is not there yet, and a drop target that fills it exactly.
     var gaps: [SlotID: CGRect] = [:]

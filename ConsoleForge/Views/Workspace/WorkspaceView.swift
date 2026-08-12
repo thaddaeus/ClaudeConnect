@@ -254,6 +254,18 @@ struct WorkspaceView: View {
                 .overlay(alignment: .leading) { Divider() }
                 .offset(x: size.width - resolved.railStripeWidth)
                 .zIndex(13)
+
+            // Separator between the row bands, drawn only when both bands hold tabs —
+            // it is the cue that the lower group came from the bottom row.
+            if let bandY = resolved.railBandStart[.bottom],
+               resolved.collapsed.keys.contains(where: { $0.row == .top }),
+               resolved.collapsed.keys.contains(where: { $0.row == .bottom }) {
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(width: resolved.railStripeWidth, height: 1)
+                    .offset(x: size.width - resolved.railStripeWidth, y: bandY)
+                    .zIndex(13.5)
+            }
         }
         ForEach(SlotID.allCases) { id in
             if let rect = resolved.collapsed[id], let kind = layout[id].section {
@@ -304,6 +316,10 @@ struct WorkspaceView: View {
                 .zIndex(14)
             }
         }
+    }
+
+    private func collapsedHelp(_ kind: SectionKind, in id: SlotID) -> String {
+        "\(kind.title) — collapsed from \(id.title). Click to expand."
     }
 
     private func collapsedHelp(_ kind: SectionKind) -> String {
