@@ -27,6 +27,10 @@ struct WorkspaceView: View {
     @State private var floatEdgeDrag: FloatEdgeDrag?
     @State private var dragFeedback: BoundaryFeedback = .free
     @State private var rowDrag: RowDrag?
+    /// The last size each slot was actually laid out at while visible. A collapsed
+    /// section is parked at THIS, not at whatever the resolver's fallback would be —
+    /// see `renderRect`.
+    @State private var lastLiveSize: [SlotID: CGSize] = [:]
 
     var body: some View {
         GeometryReader { proxy in
@@ -68,6 +72,13 @@ struct WorkspaceView: View {
                 if draggingSection != nil {
                     dropTargets(size)
                 }
+
+                // Beta only — see GeometryTrace.isEnabled.
+                if GeometryTrace.isEnabled && GeometryTrace.shared.isOverlayVisible {
+                    GeometryDebugOverlay(trace: GeometryTrace.shared, resolved: resolved, layout: layout)
+                        .offset(x: 12, y: max(12, size.height - 352))
+                        .zIndex(100)
+                }
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             // Collapsed sections are parked off the left edge; clip so they cannot
@@ -80,6 +91,10 @@ struct WorkspaceView: View {
             .onChange(of: size, initial: true) { _, newSize in
                 layout.workspaceWidth = newSize.width
                 layout.sectionMinWidths = Self.minWidths
+            }
+            .onChange(of: resolved, initial: true) { _, new in
+                for (id, rect) in new.tiled { lastLiveSize[id] = rect.size }
+                for (id, rect) in new.floating { lastLiveSize[id] = rect.size }
             }
         }
         .onAppear(perform: syncBrowserModel)
@@ -108,12 +123,27 @@ struct WorkspaceView: View {
     }
 
 
+    /// Where a section is actually drawn.
+    ///
+    /// While collapsed it is parked off-canvas — and CRUCIALLY at the size it last had
+    /// while visible, not at whatever the resolver picked. Parking at the content width
+    /// meant a pinned console reflowed from its 50% to full width the moment it
+    /// collapsed, and back again on expand: two reflows, a visible re-wrap flash, and a
+    /// scrollback left wrapped at two different widths, which is what made scrolling
+    /// artefact. Collapse must be a pure visibility change.
+    private func renderRect(_ id: SlotID, _ resolved: ResolvedWorkspaceLayout,
+                            _ size: CGSize) -> CGRect? {
+        guard let rect = resolved.renderFrame(for: id, height: size.height) else { return nil }
+        guard resolved.parked[id] != nil, let live = lastLiveSize[id],
+              live.width > 1, live.height > 1 else { return rect }
+        return CGRect(origin: CGPoint(x: -(live.width + 40), y: 0), size: live)
+    }
+
     private func consoleSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         // The console always holds a slot (WorkspaceLayout.normalize guarantees it)
-        // and never floats, so it always has a frame — zero-width while collapsed.
+        // and never floats, so it always has a frame.
         let slot = layout.slot(holding: .console) ?? SlotConfiguration(id: .topCenter, section: .console)
-        let rect = resolved.renderFrame(for: slot.id, height: size.height)
-            ?? CGRect(origin: .zero, size: size)
+        let rect = renderRect(slot.id, resolved, size) ?? CGRect(origin: .zero, size: size)
         return sectionFrame(kind: .console, slot: slot, rect: rect, size: size) {
             TerminalContainerView()
         }
@@ -122,7 +152,7 @@ struct WorkspaceView: View {
     @ViewBuilder
     private func browserSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         if let slot = layout.slot(holding: .browser),
-           let rect = resolved.renderFrame(for: slot.id, height: size.height),
+           let rect = renderRect(slot.id, resolved, size),
            let browser {
             sectionFrame(kind: .browser, slot: slot, rect: rect, size: size) {
                 BrowserSectionView(model: browser)
@@ -133,7 +163,7 @@ struct WorkspaceView: View {
     @ViewBuilder
     private func webConsoleSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         if let slot = layout.slot(holding: .webConsole),
-           let rect = resolved.renderFrame(for: slot.id, height: size.height) {
+           let rect = renderRect(slot.id, resolved, size) {
             sectionFrame(kind: .webConsole, slot: slot, rect: rect, size: size) {
                 WebConsoleSectionView(log: webLog)
             }

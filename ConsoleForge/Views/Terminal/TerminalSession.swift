@@ -325,6 +325,7 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
     // class `@MainActor` (per spec) while satisfying the nonisolated requirement.
 
     nonisolated func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        recordGeometry("grid", "session=\(sessionID.uuidString.prefix(8)) → \(newCols)×\(newRows) cols×rows (pushed to PTY)")
         MainActor.assumeIsolated {
             process?.setWindowSize(cols: newCols, rows: newRows)
             if CFDebug.geometry {

@@ -307,6 +307,16 @@ struct LayoutCommands: Commands {
             Divider()
 
             Button("Reset Layout") { layout.resetToDefault() }
+
+            // Beta only. Production ships no geometry buffer, no file handle, no HUD.
+            if GeometryTrace.isEnabled {
+                Divider()
+                Button(GeometryTrace.shared.isOverlayVisible
+                       ? "Hide Geometry Debug" : "Show Geometry Debug") {
+                    GeometryTrace.shared.isOverlayVisible.toggle()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+            }
         }
     }
 }

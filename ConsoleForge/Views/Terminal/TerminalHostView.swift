@@ -69,12 +69,20 @@ final class TerminalSessionManager {
         // small is a container mid-collapse or mid-transition, so the last good size
         // is the correct thing to keep.
         guard TerminalMetrics.isUsable(size) else {
+            GeometryTrace.shared.record("rejected",
+                "container=\(Int(size.width))×\(Int(size.height)) " +
+                "(\(TerminalMetrics.columns(forWidth: size.width)) cols) — keeping " +
+                "\(Int(currentSize.width))×\(Int(currentSize.height))")
             if CFDebug.geometry {
-                print("[geom] REJECTED degenerate container=\(Int(size.width))×\(Int(size.height)) " +
-                      "(\(TerminalMetrics.columns(forWidth: size.width)) cols) — keeping \(Int(currentSize.width))×\(Int(currentSize.height))")
+                print("[geom] REJECTED degenerate container=\(Int(size.width))×\(Int(size.height))")
             }
             return
         }
+        GeometryTrace.shared.noteContainer(size)
+        GeometryTrace.shared.record("setSize",
+            "container=\(Int(size.width))×\(Int(size.height)) " +
+            "(\(TerminalMetrics.columns(forWidth: size.width)) cols) " +
+            (hasAppliedRealSize ? "→ debounce" : "→ apply (first)"))
         guard hasAppliedRealSize else {
             hasAppliedRealSize = true
             applySize(size)
@@ -96,6 +104,8 @@ final class TerminalSessionManager {
     }
 
     private func applySize(_ size: CGSize) {
+        GeometryTrace.shared.record("applied",
+            "container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count) coalesced=\(coalescedCount)")
         currentSize = size
         if CFDebug.geometry {
             print("[geom] setSize container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count) coalesced=\(coalescedCount)")
@@ -144,6 +154,7 @@ final class TerminalSessionManager {
         if CFDebug.geometry {
             print("[geom] resync container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count)")
         }
+        GeometryTrace.shared.record("resync", "container=\(Int(size.width))×\(Int(size.height))")
         currentSize = size
         for session in sessions.values {
             session.resize(to: size)   // re-assert frame → SwiftTerm reflow → PTY winsize (no-op if unchanged)

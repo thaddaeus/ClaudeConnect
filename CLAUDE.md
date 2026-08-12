@@ -208,6 +208,15 @@ feature — *the console must not resize when a browser closes*:
 `TerminalMetrics` owns the terminal font; `TerminalSession` reads it from there so the
 rendered font and the layout engine's column arithmetic cannot drift.
 
+**Beta-only geometry instrumentation.** `GeometryTrace` records the whole chain —
+container px → SwiftTerm grid → PTY winsize — including every REJECTED and coalesced
+size, to a ring buffer, a HUD (Layout ▸ Show Geometry Debug, ⌘⇧D) and
+`…/ConsoleForge Beta/debug/geometry.jsonl` that a session can read. Gated on
+`GeometryTrace.isEnabled` = `!AppChannel.isProduction`, the same switch as the beta
+support directory and Keychain namespace, so production ships no buffer, no file handle
+and no HUD. The HUD flags it when the container's column count and SwiftTerm's grid
+disagree — that mismatch is the whole bug class.
+
 There are exactly TWO writers of a terminal view's frame — `TerminalSession.resize`
 (reached only from the manager) and the mount in `TerminalHostView.updateNSView`. Both
 are gated on `TerminalMetrics.isUsable`. Adding a third, or ungating either, is how the
