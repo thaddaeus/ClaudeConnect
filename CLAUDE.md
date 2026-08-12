@@ -169,12 +169,18 @@ feature — *the console must not resize when a browser closes*:
   **80 columns** (`TerminalMetrics.minimumWidth` — measured from the live font, ≈544pt
   at Menlo 11pt), because output written to wrap at 80 wraps mid-word below that. The
   last remaining tiled slot never collapses. Clicking the rail restores the slot.
-  A collapsed section stays in the view tree at **zero width** — never removed, so its
-  NSView survives, and never resized, because a zero width is rejected on the way into
-  `setSize`.
+  A collapsed section stays in the view tree, **parked off-canvas at a usable width** —
+  never removed, so its NSView survives, and never reflowed, because the container never
+  takes a degenerate size in the first place. Parking at zero width was a trap: it left
+  the container one unguarded frame write from a 2-column reflow.
 
 `TerminalMetrics` owns the terminal font; `TerminalSession` reads it from there so the
 rendered font and the layout engine's column arithmetic cannot drift.
+
+There are exactly TWO writers of a terminal view's frame — `TerminalSession.resize`
+(reached only from the manager) and the mount in `TerminalHostView.updateNSView`. Both
+are gated on `TerminalMetrics.isUsable`. Adding a third, or ungating either, is how the
+buffer gets destroyed.
 
 **The load-bearing rule (tasks 9543 / 9487 — permanent terminal garble is SwiftTerm
 BUFFER MODEL corruption from reflowing at a wrong size):** every section is rendered

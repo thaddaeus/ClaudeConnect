@@ -337,7 +337,16 @@ struct TerminalHostView: NSViewRepresentable {
         // setSize path — which is the single source of frame changes for mounted
         // and detached terminals alike (task 9543).
         if let session, let target {
-            target.frame = container.bounds
+            // The LAST unguarded frame write in the app, and the one that bit: mounting
+            // into a container that is collapsed, zero-width or mid-transition would set
+            // the terminal's frame directly here, reflowing the buffer to a couple of
+            // columns and bypassing setSize's floor entirely. Adopt the container's
+            // geometry only when it is a usable terminal size; otherwise leave the view
+            // at the good size it already has and let the next real frameDidChange
+            // correct it through the coalesced path.
+            if TerminalMetrics.isUsable(container.bounds.size) {
+                target.frame = container.bounds
+            }
             target.autoresizingMask = []
             container.addSubview(target)
             context.coordinator.mountedSession = session

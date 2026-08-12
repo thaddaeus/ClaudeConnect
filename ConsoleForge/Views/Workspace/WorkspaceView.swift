@@ -58,6 +58,9 @@ struct WorkspaceView: View {
                 }
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
+            // Collapsed sections are parked off the left edge; clip so they cannot
+            // paint over the sidebar.
+            .clipped()
             // Publish the live geometry so the store can work out a section's minimum
             // fraction on its own — the header control, the context menu and the
             // menu-bar Layout menu then all reach the same answer without threading

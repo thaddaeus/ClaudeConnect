@@ -322,6 +322,18 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         }
         result.emptyTrailingWidth = max(0, contentWidth - x)
 
+        // Collapsed sections are PARKED OFF-CANVAS at a usable width rather than
+        // squashed to zero. A zero-width container is a degenerate geometry sitting one
+        // unguarded frame write away from reflowing the SwiftTerm buffer to a couple of
+        // columns — which is permanent. Parked off the left edge at a real width, the
+        // hosted view keeps its identity AND a sane size, so collapse and expand cause
+        // no reflow at all.
+        for id in SlotID.allCases where collapsed.contains(id) || floatingCollapsed.contains(id) {
+            let parkedWidth = max(floorWidth(self[id]), contentWidth)
+            result.parked[id] = CGRect(x: -(parkedWidth + 40), y: 0,
+                                       width: parkedWidth, height: size.height)
+        }
+
         // The stripe: every collapsed section, wherever its slot sits, stacked as tabs
         // down the right edge.
         var y: CGFloat = 0
@@ -391,6 +403,8 @@ struct ResolvedWorkspaceLayout: Equatable {
     var tiled: [SlotID: CGRect] = [:]
     /// Frames for occupied, floating slots (overlaid; consume no layout space).
     var floating: [SlotID: CGRect] = [:]
+    /// Off-canvas frames for collapsed sections, at a usable width — see `renderFrame`.
+    var parked: [SlotID: CGRect] = [:]
     /// Width of the right-edge rail stripe, 0 when nothing is collapsed. Everything
     /// else is laid out to the left of it.
     var railStripeWidth: CGFloat = 0
@@ -409,16 +423,16 @@ struct ResolvedWorkspaceLayout: Equatable {
         tiled[id] ?? floating[id]
     }
 
-    /// Where a section should be RENDERED: its tile or float, or a zero-width sliver at
-    /// its rail when collapsed. Collapsed sections stay in the view tree at zero width
-    /// rather than being removed — the hosted NSView (a live terminal, a loaded page) is
-    /// then never dismantled, and the terminal is never resized, because a zero width
-    /// is rejected by the guard on the way into `TerminalSessionManager.setSize`.
+    /// Where a section should be RENDERED: its tile or float, or its off-canvas parking
+    /// frame when collapsed.
+    ///
+    /// A collapsed section stays in the view tree — the hosted NSView (a live terminal,
+    /// a loaded page) is never dismantled — and it stays at a USABLE width. It used to
+    /// park at zero width, which left a degenerate container sitting one unguarded frame
+    /// write away from reflowing the SwiftTerm buffer to a couple of columns. Parked off
+    /// the left edge at a real width instead, collapsing and expanding cause no reflow
+    /// at all.
     func renderFrame(for id: SlotID, height: CGFloat) -> CGRect? {
-        if let frame = tiled[id] ?? floating[id] { return frame }
-        if let rail = collapsed[id] {
-            return CGRect(x: rail.minX, y: 0, width: 0, height: height)
-        }
-        return nil
+        tiled[id] ?? floating[id] ?? parked[id]
     }
 }
