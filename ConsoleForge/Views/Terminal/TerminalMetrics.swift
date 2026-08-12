@@ -56,10 +56,15 @@ enum TerminalMetrics {
         max(0, Int(height / cellHeight))
     }
 
-    /// Narrowest the console may be rendered: 80 columns. ≈544pt at Menlo 11pt.
-    /// Below this the console slot collapses to a rail instead of shrinking further.
+    /// Narrowest the console may be rendered: 80 columns, plus ONE CELL OF SLACK.
+    ///
+    /// The slack is not padding-by-feel. `columns(forWidth:)` tracks SwiftTerm exactly
+    /// at most widths but runs a single column optimistic at some (1528pt predicts 216,
+    /// SwiftTerm reports 215 — measured, not guessed). Asking for 81 cells' worth means
+    /// the floor delivers a true 80 even when the estimate is high by one, which is the
+    /// whole promise: below 80, output written to wrap at 80 wraps mid-word.
     static var minimumWidth: CGFloat {
-        (cellWidth * CGFloat(standardColumns)).rounded(.up) + chrome
+        (cellWidth * CGFloat(standardColumns + 1)).rounded(.up) + chrome
     }
 
     static var minimumHeight: CGFloat {
