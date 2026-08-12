@@ -120,7 +120,10 @@ export DEV_ID_APPLICATION="Developer ID Application: ..."
 
 The detail area is a **slot container** (`Views/Workspace/WorkspaceView.swift`), not a
 single pane. SLOTS are fixed named positions (`left`, `center`, `right`, laid out
-left → right); SECTIONS (`console`, `browser`) are movable content dropped into them.
+left → right); SECTIONS are movable content dropped into them. Sections are named by
+ENGINE, not by role — `.browser` displays as **Safari** (the in-app WKWebView), so
+Phase C's managed Chrome can sit beside it without either going ambiguous. Raw values
+are the `layout.json` persistence keys; never rename them.
 Layout is per-**window**, not per-tab — switching console tabs never rearranges it.
 Persisted to `layout.json` beside `sessions.json`, so a bad layout can be deleted
 without touching sessions.

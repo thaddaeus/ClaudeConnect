@@ -37,11 +37,11 @@ struct SectionHeaderView: View {
 
     private var bar: some View {
         HStack(spacing: 6) {
+            // Icon only — the header strip is 24pt of stolen height, so the section's
+            // kind is carried by its glyph (safari vs. terminal, and Phase C's Chrome
+            // beside them). The full name lives in the tooltip and every menu.
             Image(systemName: kind.symbol)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-            Text(kind.title)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
             sizeBadge
@@ -76,12 +76,19 @@ struct SectionHeaderView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(Rectangle())
-        .help(slot.isFloating
-              ? "Drag to move the floating \(kind.title)"
-              : "Drag to move \(kind.title) into another slot")
+        .help(helpText)
     }
 
     static let height: CGFloat = 24
+
+    /// The header shows only a glyph, so the tooltip carries the section's name.
+    private var helpText: String {
+        let drag = slot.isFloating
+            ? "Drag to move the floating \(kind.title)"
+            : "Drag to move \(kind.title) into another slot"
+        guard let detail = kind.detail else { return "\(kind.title)\n\(drag)" }
+        return "\(kind.title) — \(detail)\n\(drag)"
+    }
 
     @ViewBuilder
     private var sizeBadge: some View {

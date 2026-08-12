@@ -2,6 +2,11 @@ import Foundation
 import CoreGraphics
 
 /// Movable content. A section lives in exactly one slot, or nowhere (closed).
+///
+/// Sections are named by ENGINE, not by role: "Safari" is the in-app WKWebView, and
+/// Phase C's managed Chrome will be its own case alongside it. A generic "Browser"
+/// label would go ambiguous the moment there are two of them. The raw values are the
+/// persistence keys in `layout.json` — never rename them.
 enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case console
     case browser
@@ -11,14 +16,22 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .console: "Console"
-        case .browser: "Browser"
+        case .browser: "Safari"
+        }
+    }
+
+    /// What the section actually is, for tooltips and menu help.
+    var detail: String? {
+        switch self {
+        case .console: nil
+        case .browser: "In-app WebKit (WKWebView) — the engine Safari uses. Web Inspector enabled."
         }
     }
 
     var symbol: String {
         switch self {
         case .console: "terminal"
-        case .browser: "globe"
+        case .browser: "safari"
         }
     }
 
