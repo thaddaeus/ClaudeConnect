@@ -264,9 +264,9 @@ final class LayoutStore {
         commit()
     }
 
-    /// Back to the arrangement before the maximize, or — if there was none — simply
-    /// visible and flexible again, with pinned neighbours scaled down until this slot
-    /// clears `minFraction`. Always succeeds; it is the only way off a rail.
+    /// Back to the arrangement before the maximize, or — if there was none — visible
+    /// again at the size it was collapsed at, with pinned neighbours scaled down to make
+    /// room. Always succeeds; it is the only way off a rail.
     func normal(_ id: SlotID) {
         if let restorePoint, maximizedSlot != nil {
             layout = restorePoint
@@ -281,27 +281,10 @@ final class LayoutStore {
         restore(id, minFraction: minFraction(id))
     }
 
-    /// Bring a collapsed slot back: make it flexible, and if pinned neighbours are what
-    /// crowded it out, scale them down until `minFraction` of the window is free. The
-    /// only escape from a rail, so it must always succeed.
+    /// Bring a collapsed slot back at the size it was collapsed at. The arithmetic
+    /// lives in `WorkspaceLayout.expand` so it is testable without a store.
     func restore(_ id: SlotID, minFraction: Double) {
-        layout[id].isCollapsed = false
-        // A floating panel is restored by simply un-collapsing it: it overlays, so it
-        // needs no room made for it and must not be re-docked into the tiled flow.
-        guard !layout[id].isFloating else { commit(); return }
-        layout[id].isPinned = false
-        let others = layout.slots.filter {
-            $0.id != id && $0.section != nil && !$0.isFloating && $0.isPinned
-        }
-        let sum = others.reduce(0.0) { $0 + $1.pinnedFraction }
-        let budget = max(0, 1.0 - minFraction)
-        if sum > budget, sum > 0 {
-            let scale = budget / sum
-            for other in others {
-                layout[other.id].pinnedFraction =
-                    max(other.pinnedFraction * scale, WorkspaceLayout.minPinnedFraction)
-            }
-        }
+        layout.expand(id, minFraction: minFraction)
         commit()
     }
 

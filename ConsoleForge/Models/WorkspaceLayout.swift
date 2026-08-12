@@ -194,6 +194,43 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         slots = repaired
     }
 
+    /// Bring a collapsed slot back, at the size it was collapsed AT.
+    ///
+    /// A PIN SURVIVES A COLLAPSE — collapsing is a visibility change, not a licence to
+    /// rewrite the sizing rule, and holding an exact fraction is the entire point of
+    /// pinning. The pin is only raised to the section's floor, so a slot cannot expand
+    /// straight back into a forced collapse. Pinned neighbours and reserved gaps are
+    /// then scaled down until there is room, because this is the only escape from a rail
+    /// and it has to always succeed.
+    mutating func expand(_ id: SlotID, minFraction: Double) {
+        self[id].isCollapsed = false
+        // A floating panel overlays: it needs no room made for it and must not be
+        // re-docked into the tiled flow.
+        guard !self[id].isFloating else { return }
+
+        let want: Double
+        if self[id].isPinned {
+            want = Swift.max(self[id].pinnedFraction, minFraction)
+            self[id].pinnedFraction = want
+        } else {
+            want = minFraction
+        }
+
+        // Reserved gaps claim width exactly like pinned sections, so they belong in this
+        // sum too — otherwise a hole could crowd the restored slot straight back into a
+        // collapse. Collapsed neighbours claim nothing and are excluded.
+        let others = slots.filter { $0.id != id && !$0.isFloating && $0.isPinned && !$0.isCollapsed }
+        let sum = others.reduce(0.0) { $0 + $1.pinnedFraction }
+        let budget = Swift.max(0, 1.0 - want)
+        if sum > budget, sum > 0 {
+            let scale = budget / sum
+            for other in others {
+                self[other.id].pinnedFraction =
+                    Swift.max(other.pinnedFraction * scale, WorkspaceLayout.minPinnedFraction)
+            }
+        }
+    }
+
     static let minPinnedFraction: Double = 0.02
     /// Fallback floor for a section that declares no minimum of its own.
     static let minSlotWidth: CGFloat = 240
