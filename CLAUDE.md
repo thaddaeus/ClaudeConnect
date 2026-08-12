@@ -119,8 +119,20 @@ export DEV_ID_APPLICATION="Developer ID Application: ..."
 ## Workspace slot layout
 
 The detail area is a **slot container** (`Views/Workspace/WorkspaceView.swift`), not a
-single pane. SLOTS are fixed named positions (`left`, `center`, `right`, laid out
-left → right); SECTIONS are movable content dropped into them. Sections are named by
+single pane. SLOTS are the cells of a **2 × 3 grid** — rows `top`/`bottom` (the Y axis)
+× columns `left`/`center`/`right` (the X axis); SECTIONS are movable content dropped
+into them. `SlotID` stays a flat `String` enum (`topLeft` … `bottomRight`) because its
+raw values are `layout.json` keys; pre-Y files wrote `left`/`center`/`right` and decode
+into the top row via `SlotID.init(legacy:)`.
+
+**Pinning is a WIDTH concept only — rows have no pinned/flexible switch.** A lone row
+FILLS the height; height is only constrained once a second row sits under the first, and
+then `RowConfiguration.heightFraction` is how they split it (the row splitter sets it).
+The X arithmetic below runs independently *inside* each row. A row is floored at the
+tallest minimum its sections declare — the console's is 24 terminal rows, the companion
+to its 80-column width floor — and when floors overflow, the excess comes off the rows
+with SLACK above their own floor, never by scaling everything down (that would push a
+floored row back under its minimum). Sections are named by
 ENGINE, not by role — `.browser` displays as **Safari** (the in-app WKWebView), so
 Phase C's managed Chrome can sit beside it without either going ambiguous. Raw values
 are the `layout.json` persistence keys; never rename them.

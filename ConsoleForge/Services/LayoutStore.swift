@@ -99,7 +99,8 @@ final class LayoutStore {
     /// the window from the console), or focus it if already open.
     func open(_ section: SectionKind) {
         guard !layout.isOpen(section) else { return }
-        let preferred: [SlotID] = [.right, .left, .center]
+        // Prefer the far side of the top row, then the bottom row, then anywhere.
+        let preferred: [SlotID] = [.topRight, .topLeft, .bottomCenter, .bottomLeft, .bottomRight, .topCenter]
         guard let target = preferred.first(where: { layout[$0].section == nil }) else { return }
         layout[target].section = section
         commit()
@@ -285,6 +286,16 @@ final class LayoutStore {
     /// lives in `WorkspaceLayout.expand` so it is testable without a store.
     func restore(_ id: SlotID, minFraction: Double) {
         layout.expand(id, minFraction: minFraction)
+        commit()
+    }
+
+    /// Drag of the horizontal boundary between two rows. Rows have no pinned/flexible
+    /// switch — pinning is a width concept — so this simply sets how the live rows split
+    /// the height. `resolve` floors each row at its sections' minimum before applying it.
+    func resizeRows(above: SlotRow, below: SlotRow, aboveFraction: Double) {
+        let clamped = min(max(aboveFraction, 0.05), 0.95)
+        layout[above].heightFraction = clamped
+        layout[below].heightFraction = 1.0 - clamped
         commit()
     }
 

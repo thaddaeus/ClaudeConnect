@@ -26,11 +26,14 @@ struct WorkspaceView: View {
     @State private var splitterDrag: SplitterDrag?
     @State private var floatEdgeDrag: FloatEdgeDrag?
     @State private var dragFeedback: BoundaryFeedback = .free
+    @State private var rowDrag: RowDrag?
 
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let resolved = layout.layout.resolve(in: size, minWidths: Self.minWidths)
+            let resolved = layout.layout.resolve(in: size,
+                                                 minWidths: Self.minWidths,
+                                                 minHeights: Self.minHeights)
 
             ZStack(alignment: .topLeading) {
                 // Leftover that no flexible slot absorbed shows through here as
@@ -57,6 +60,8 @@ struct WorkspaceView: View {
                 collapsedRails(resolved, size)
 
                 splitterHandles(resolved, size)
+
+                rowSplitterHandles(resolved, size)
 
                 dragReadouts(resolved, size)
 
@@ -93,11 +98,20 @@ struct WorkspaceView: View {
         [.console: TerminalMetrics.minimumWidth, .browser: 320, .webConsole: 300]
     }
 
+    /// Per-section height floors for the Y pass. The console's is 24 terminal rows plus
+    /// its own chrome (section header + tab bar) — the VT100 row count, the companion to
+    /// the 80-column width floor.
+    private static var minHeights: [SectionKind: CGFloat] {
+        [.console: TerminalMetrics.minimumHeight + SectionHeaderView.height + 36,
+         .browser: 220,
+         .webConsole: 160]
+    }
+
 
     private func consoleSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         // The console always holds a slot (WorkspaceLayout.normalize guarantees it)
         // and never floats, so it always has a frame — zero-width while collapsed.
-        let slot = layout.slot(holding: .console) ?? SlotConfiguration(id: .center, section: .console)
+        let slot = layout.slot(holding: .console) ?? SlotConfiguration(id: .topCenter, section: .console)
         let rect = resolved.renderFrame(for: slot.id, height: size.height)
             ?? CGRect(origin: .zero, size: size)
         return sectionFrame(kind: .console, slot: slot, rect: rect, size: size) {
@@ -306,14 +320,14 @@ struct WorkspaceView: View {
         ForEach(resolved.splitters) { splitter in
             Rectangle()
                 .fill(Color.clear)
-                .frame(width: 8, height: size.height)
+                .frame(width: 8, height: splitter.height)
                 .overlay {
                     Rectangle()
                         .fill(splitterColor(splitter))
                         .frame(width: splitterIsActive(splitter) ? 3 : 1)
                 }
                 .contentShape(Rectangle())
-                .offset(x: splitter.x - 4, y: 0)
+                .offset(x: splitter.x - 4, y: splitter.y)
                 .onHover { inside in
                     if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
                 }
@@ -449,6 +463,50 @@ struct WorkspaceView: View {
             }
     }
 
+    /// The Y axis's splitter: drag the boundary between two rows to change how they
+    /// split the height. Rows have no pinned/flexible switch, so this is a plain ratio —
+    /// and `resolve` still floors each row at its sections' minimum, which is what stops
+    /// a drag squeezing the console below 24 terminal rows.
+    @ViewBuilder
+    private func rowSplitterHandles(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        ForEach(resolved.rowSplitters) { splitter in
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: max(0, size.width - resolved.railStripeWidth), height: 8)
+                .overlay {
+                    Rectangle()
+                        .fill(rowDrag?.above == splitter.above
+                              ? Color.accentColor : Color(nsColor: .separatorColor))
+                        .frame(height: rowDrag?.above == splitter.above ? 3 : 1)
+                }
+                .contentShape(Rectangle())
+                .offset(x: 0, y: splitter.y - 4)
+                .onHover { inside in
+                    if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            guard size.height > 0 else { return }
+                            let drag: RowDrag
+                            if let existing = rowDrag,
+                               existing.above == splitter.above, existing.startY == value.startLocation.y {
+                                drag = existing
+                            } else {
+                                drag = RowDrag(above: splitter.above, startY: value.startLocation.y,
+                                               fraction: Double(splitter.y / size.height))
+                                rowDrag = drag
+                            }
+                            let delta = Double(value.translation.height / size.height)
+                            layout.resizeRows(above: splitter.above, below: splitter.below,
+                                              aboveFraction: drag.fraction + delta)
+                        }
+                        .onEnded { _ in rowDrag = nil }
+                )
+                .zIndex(6)
+        }
+    }
+
     // MARK: - Floating
 
     /// A floating panel is DOCKED: it keeps its slot's edge and full height, and only
@@ -506,9 +564,13 @@ struct WorkspaceView: View {
     /// duration of the drag — that is what makes "move to ANY available slot" reachable
     /// by drag and not just by menu.
     private func dropTargets(_ size: CGSize) -> some View {
-        HStack(spacing: 8) {
-            ForEach(SlotID.allCases) { id in
-                dropZone(id)
+        VStack(spacing: 8) {
+            ForEach(SlotRow.allCases) { row in
+                HStack(spacing: 8) {
+                    ForEach(SlotID.allCases.filter { $0.row == row }) { id in
+                        dropZone(id)
+                    }
+                }
             }
         }
         .padding(10)
@@ -581,6 +643,13 @@ struct WorkspaceView: View {
         var trailing: SlotID
         var leadingFraction: Double
         var trailingFraction: Double?
+    }
+
+    private struct RowDrag {
+        var above: SlotRow
+        var startY: CGFloat
+        /// The boundary's position as a fraction of the window height when the drag began.
+        var fraction: Double
     }
 
     private struct FloatEdgeDrag {
