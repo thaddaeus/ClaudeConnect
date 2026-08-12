@@ -119,6 +119,20 @@ final class LayoutStore {
         layout.isOpen(section) ? close(section) : open(section)
     }
 
+    /// Make the section owning `kind`'s tab strip visible — opening it if closed and
+    /// un-collapsing it if it is parked in the rail.
+    ///
+    /// Opening a tab whose strip is not on screen would otherwise leave it invisible but
+    /// live: still in `openTabIDs`, still counted by the close-with-children prompt, and
+    /// with nothing to click. Called on every document open.
+    func revealStrip(for kind: ViewKind) {
+        guard let section = SectionKind.allCases.first(where: { $0.stripKind == kind }) else { return }
+        open(section)
+        if let slot = layout.slot(holding: section), slot.isCollapsed {
+            normal(slot.id)
+        }
+    }
+
     func pin(_ id: SlotID, fraction: Double) {
         layout[id].isPinned = true
         layout[id].pinnedFraction = min(max(fraction, WorkspaceLayout.minPinnedFraction), 1.0)

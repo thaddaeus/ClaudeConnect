@@ -59,6 +59,10 @@ struct WorkspaceView: View {
                     webConsoleSection(resolved, size)
                 }
 
+                if layout.isOpen(.editor) {
+                    documentSection(resolved, size)
+                }
+
                 reservedGaps(resolved, size)
 
                 collapsedRails(resolved, size)
@@ -110,7 +114,7 @@ struct WorkspaceView: View {
     /// standard 80-column terminal at the live font; below that it collapses to a rail
     /// instead of rendering a terminal too narrow to be read.
     private static var minWidths: [SectionKind: CGFloat] {
-        [.console: TerminalMetrics.minimumWidth, .browser: 320, .webConsole: 300]
+        [.console: TerminalMetrics.minimumWidth, .browser: 320, .webConsole: 300, .editor: 320]
     }
 
     /// Per-section height floors for the Y pass. The console's is 24 terminal rows plus
@@ -119,7 +123,10 @@ struct WorkspaceView: View {
     private static var minHeights: [SectionKind: CGFloat] {
         [.console: TerminalMetrics.minimumHeight + SectionHeaderView.height + 36,
          .browser: 220,
-         .webConsole: 160]
+         .webConsole: 160,
+         // Section header + its own tab strip + the viewer's path bar, plus enough
+         // document to be worth showing.
+         .editor: 200]
     }
 
 
@@ -166,6 +173,20 @@ struct WorkspaceView: View {
            let rect = renderRect(slot.id, resolved, size) {
             sectionFrame(kind: .webConsole, slot: slot, rect: rect, size: size) {
                 WebConsoleSectionView(log: webLog)
+            }
+        }
+    }
+
+    /// The Documents section — its own tab strip plus a read-only view of the selected
+    /// file. Rendered exactly once at a fixed structural position, like every other
+    /// section: no `if/else` arms around it, nothing re-parented, so its NSTextView keeps
+    /// its identity (and its scroll position) across every move, pin and float.
+    @ViewBuilder
+    private func documentSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        if let slot = layout.slot(holding: .editor),
+           let rect = renderRect(slot.id, resolved, size) {
+            sectionFrame(kind: .editor, slot: slot, rect: rect, size: size) {
+                DocumentSectionView()
             }
         }
     }

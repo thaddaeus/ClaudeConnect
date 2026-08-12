@@ -32,6 +32,13 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     /// tab continues ITS OWN conversation instead of "the most recent in this
     /// directory" (`--continue`) — which would interleave tabs sharing a cwd.
     var claudeSessionID: UUID?
+    /// Terminal (a PTY) or document (a file). Defaults to `.terminal` so every session
+    /// written before Phase B decodes unchanged. See `ViewKind`.
+    var viewKind: ViewKind = .terminal
+    /// The file a `.document` tab shows. Nil on terminal tabs.
+    var documentPath: String?
+
+    var isTerminal: Bool { viewKind.isTerminal }
 
     // Custom decoder to handle missing keys from older sessions.json files
     init(from decoder: Decoder) throws {
@@ -58,6 +65,21 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         parentTabID = try c.decodeIfPresent(UUID.self, forKey: .parentTabID)
         claudeSessionID = try c.decodeIfPresent(UUID.self, forKey: .claudeSessionID)
+        // Absent on every session written before Phase B — and those are all terminals.
+        viewKind = try c.decodeIfPresent(ViewKind.self, forKey: .viewKind) ?? .terminal
+        documentPath = try c.decodeIfPresent(String.self, forKey: .documentPath)
+    }
+
+    /// A read-only document tab, parented to the console tab it was opened from.
+    static func document(path: String, parentTabID: UUID?) -> SessionConfiguration {
+        var config = SessionConfiguration()
+        config.viewKind = .document
+        config.documentPath = path
+        config.name = (path as NSString).lastPathComponent
+        config.workingDirectory = (path as NSString).deletingLastPathComponent
+        config.tabIconName = "doc.text"
+        config.parentTabID = parentTabID
+        return config
     }
 
     init() {}

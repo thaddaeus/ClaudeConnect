@@ -29,13 +29,13 @@ struct TerminalContainerView: View {
     private func terminalColumn(activeID: UUID?) -> some View {
         VStack(spacing: 0) {
             // Tab bar
-            if !store.openTabIDs.isEmpty {
+            if !store.terminalTabIDs.isEmpty {
                 TerminalTabBar()
             }
 
             // Terminal area
             ZStack {
-                if store.openTabIDs.isEmpty {
+                if store.terminalTabIDs.isEmpty {
                     emptyState
                 } else {
                     TerminalHostView(session: manager.session(for: activeID),
@@ -68,7 +68,7 @@ struct TerminalContainerView: View {
             // Sessions are created once the terminal area's size has SETTLED, not when
             // the first one arrives — see TerminalSessionManager.setSize.
             .onChange(of: manager.hasAppliedRealSize) { _, _ in reconcile() }
-            .onChange(of: store.openTabIDs) { _, _ in reconcile() }
+            .onChange(of: store.terminalTabIDs) { _, _ in reconcile() }
             .onChange(of: store.activeTabID) { _, newID in
                 if let tabID = newID {
                     activityTracker.didFocusTab(tabID: tabID)
@@ -133,7 +133,9 @@ struct TerminalContainerView: View {
         // hasAppliedRealSize re-invokes us when it lands.
         guard manager.hasAppliedRealSize else { return }
         manager.reconcile(
-            openIDs: store.openTabIDs,
+            // CONSOLE STRIP ONLY. A document tab has no PTY and must never reach
+            // TerminalSession / ClaudeProcessBuilder (task 9736 criterion 11).
+            openIDs: store.terminalTabIDs,
             resolveLaunch: { id in store.resolveLaunch(for: id) },
             onOutput: { id in
                 activityTracker.didReceiveOutput(
@@ -152,7 +154,7 @@ struct TerminalContainerView: View {
             }
         )
         // Newly created sessions start running.
-        for id in store.openTabIDs where tabStates[id] == nil {
+        for id in store.terminalTabIDs where tabStates[id] == nil {
             tabStates[id] = .running
         }
     }
@@ -162,7 +164,7 @@ struct TerminalContainerView: View {
         activityTracker.didTerminate(tabID: id)
         // Only emit process-exit if the tab is still open (not already closed by
         // user or self-close, which would have emitted their own event).
-        if store.openTabIDs.contains(id) {
+        if store.terminalTabIDs.contains(id) {
             let tabName = store.session(for: id)?.name ?? "Unknown"
             TabEventWriter.emitClose(tabID: id, tabName: tabName, reason: .processExit, exitCode: exitCode)
         }

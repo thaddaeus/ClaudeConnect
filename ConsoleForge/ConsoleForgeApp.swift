@@ -211,8 +211,10 @@ struct ConsoleForgeApp: App {
                                 workingDirectory: session.workingDirectory,
                                 claudeSessionID: session.claudeSessionID)
                     }
+                    // Console tabs only — the voice channel speaks to a PTY, and a
+                    // document tab has none (task 9736 criterion 11).
                     voice.openTabs = {
-                        store.openTabIDs.compactMap { id in
+                        store.terminalTabIDs.compactMap { id in
                             store.session(for: id).map { (id: id, name: $0.name) }
                         }
                     }
@@ -274,15 +276,23 @@ struct ConsoleForgeApp: App {
             }
 
             CommandGroup(after: .newItem) {
+                Button("Open Document\u{2026}") {
+                    // Raise the strip first, so the panel's result lands somewhere the
+                    // user can already see.
+                    layoutStore.revealStrip(for: .document)
+                    DocumentOpener.present(store: store, layout: layoutStore)
+                }
+                .keyboardShortcut("o")
+
                 Divider()
 
                 Button("Close Tab") {
-                    if let active = store.activeTabID {
-                        store.closeTab(sessionID: active)
-                    }
+                    // Closes whichever strip you last picked a tab in, and asks first if
+                    // that tab has parented document children (task 9736 criterion 12).
+                    store.requestCloseFocusedTab()
                 }
                 .keyboardShortcut("w")
-                .disabled(store.activeTabID == nil)
+                .disabled(store.focusedTabID == nil)
 
                 Divider()
 
@@ -303,7 +313,7 @@ struct ConsoleForgeApp: App {
                         store.switchTabByIndex(index)
                     }
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
-                    .disabled(index >= store.openTabIDs.count)
+                    .disabled(index >= store.focusedStripCount)
                 }
             }
 
@@ -383,7 +393,8 @@ struct ConsoleForgeApp: App {
         // still open (stale ids from dead environments are ignored).
         if let parentStr = command.parentTabID,
            let parentID = UUID(uuidString: parentStr),
-           store.openTabIDs.contains(parentID) {
+           store.openTabIDs.contains(parentID),
+           store.isTerminal(parentID) {
             config.parentTabID = parentID
         }
 
@@ -402,8 +413,10 @@ struct ConsoleForgeApp: App {
         }
         // Close by name (used by --close --name)
         if let name = command.name {
+            // `consoleforge-tab --close --name` addresses CONSOLE tabs: the CLI's whole
+            // vocabulary is sessions with a process.
             if let session = store.sessions.first(where: {
-                $0.name == name && store.openTabIDs.contains($0.id)
+                $0.name == name && $0.isTerminal && store.openTabIDs.contains($0.id)
             }) {
                 store.closeTab(sessionID: session.id, reason: .selfClose)
             }

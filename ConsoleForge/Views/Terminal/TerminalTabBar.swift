@@ -24,7 +24,7 @@ struct TerminalTabBar: View {
     private var tabStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(store.openTabIDs, id: \.self) { sessionID in
+                ForEach(store.terminalTabIDs, id: \.self) { sessionID in
                     if let session = store.session(for: sessionID) {
                         tabButton(session: session, isActive: store.activeTabID == sessionID)
                             .onDrag {
@@ -74,31 +74,36 @@ struct TerminalTabBar: View {
         return parent.tabColor
     }
 
-    /// Whether the active tab is a grouped child of `session` — the parent's
-    /// trailing edge dims so the focused child reads as sitting in front.
+    /// Whether the focused tab is a grouped child of `session` — the parent's
+    /// trailing edge dims so the focused child reads as sitting in front. Follows the
+    /// FOCUSED tab across both strips, so a console tab whose document child was just
+    /// clicked shows the same relationship a console child would.
     private func isParentOfActiveTab(_ session: SessionConfiguration) -> Bool {
-        guard let activeID = store.activeTabID, activeID != session.id,
-              let active = store.session(for: activeID) else { return false }
-        return active.parentTabID == session.id
+        guard let focusedID = store.focusedTabID, focusedID != session.id,
+              let focused = store.session(for: focusedID) else { return false }
+        return focused.parentTabID == session.id
     }
 
     /// Whether the active tab belongs to the group anchored at `parentID` —
     /// the parent itself or one of its grouped children. When focus leaves the
     /// group, its colors dim like any other inactive tab.
     private func groupHasFocus(parentID: UUID) -> Bool {
-        guard let activeID = store.activeTabID else { return false }
-        if activeID == parentID { return true }
-        return store.session(for: activeID)?.parentTabID == parentID
+        guard let focusedID = store.focusedTabID else { return false }
+        if focusedID == parentID { return true }
+        return store.session(for: focusedID)?.parentTabID == parentID
     }
 
     /// Whether `session` is the last member of its group in tab order — the next
     /// tab is neither its parent nor a sibling child of the same parent.
     private func isLastInGroup(_ session: SessionConfiguration) -> Bool {
+        // Adjacency is a per-STRIP question now: the tab after this one in the console
+        // strip, not in the flat open-tab list.
+        let strip = store.terminalTabIDs
         guard let pid = session.parentTabID,
-              let idx = store.openTabIDs.firstIndex(of: session.id) else { return false }
+              let idx = strip.firstIndex(of: session.id) else { return false }
         let nextIdx = idx + 1
-        guard nextIdx < store.openTabIDs.count else { return true }
-        let nextID = store.openTabIDs[nextIdx]
+        guard nextIdx < strip.count else { return true }
+        let nextID = strip[nextIdx]
         if nextID == pid { return false }
         if let next = store.session(for: nextID), next.parentTabID == pid { return false }
         return true
@@ -124,7 +129,7 @@ struct TerminalTabBar: View {
                 .lineLimit(1)
 
             Button {
-                store.closeTab(sessionID: session.id)
+                store.requestCloseTab(sessionID: session.id)
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
@@ -208,7 +213,7 @@ struct TerminalTabBar: View {
             }
 
             Button(role: .destructive) {
-                store.closeTab(sessionID: session.id)
+                store.requestCloseTab(sessionID: session.id)
             } label: {
                 Label("Close Tab", systemImage: "xmark")
             }

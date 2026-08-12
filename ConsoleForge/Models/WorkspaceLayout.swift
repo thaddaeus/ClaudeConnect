@@ -11,6 +11,11 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case console
     case browser
     case webConsole
+    /// The `layout.json` key stays `editor` (the name the spec and every work note use)
+    /// even though what shipped is a READ-ONLY viewer — renaming a persistence key to
+    /// track a scope decision would orphan every saved layout. The user-facing name says
+    /// what it does.
+    case editor
 
     var id: String { rawValue }
 
@@ -19,6 +24,7 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .console: "Console"
         case .browser: "Safari"
         case .webConsole: "Web Output"
+        case .editor: "Documents"
         }
     }
 
@@ -28,6 +34,7 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .console: nil
         case .browser: "In-app WebKit (WKWebView) — the engine Safari uses."
         case .webConsole: "console.* calls, errors and fetch/XHR requests captured from the Safari panel."
+        case .editor: "Read-only file viewer. Each document tab is parented to the console tab it was opened from."
         }
     }
 
@@ -36,6 +43,7 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .console: "terminal"
         case .browser: "safari"
         case .webConsole: "list.bullet.rectangle"
+        case .editor: "doc.text"
         }
     }
 
@@ -43,6 +51,18 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     /// (everything else floats *over* it).
     var isClosable: Bool { self != .console }
     var canFloat: Bool { self != .console }
+
+    /// The kind of tab this section's strip holds, if it owns one. A strip filters
+    /// `openTabIDs` down to its own kind and enforces group contiguity inside that
+    /// filtered list — there is no global contiguity to enforce once a parent and its
+    /// children live in different strips (task 9736 criterion 10).
+    var stripKind: ViewKind? {
+        switch self {
+        case .console: .terminal
+        case .editor: .document
+        case .browser, .webConsole: nil
+        }
+    }
 }
 
 /// The Y axis. Rows stack top → bottom and size themselves exactly like columns do,
