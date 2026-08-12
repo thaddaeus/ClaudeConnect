@@ -54,6 +54,22 @@ struct SectionHeaderView: View {
             .menuIndicator(.hidden)
             .frame(width: 22)
 
+            // Collapse sits immediately before Close, because that is where the hand
+            // goes to make a panel go away — reaching for ✕ and losing the whole panel
+            // was the actual failure. Same glyph for every section: all rails park in
+            // the right-edge stripe, so collapsing always means "push it that way".
+            Button {
+                layout.collapse(slot.id)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 18, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Collapse \(kind.title) to the right rail — it stays loaded")
+
             if kind.isClosable {
                 Button {
                     layout.close(kind)
@@ -65,6 +81,7 @@ struct SectionHeaderView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .help("Close \(kind.title) — discards it. Use ❯ to collapse instead.")
             }
         }
         .padding(.horizontal, 8)
@@ -72,6 +89,7 @@ struct SectionHeaderView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { layout.collapse(slot.id) }
         .help(helpText)
     }
 
@@ -99,13 +117,12 @@ struct SectionHeaderView: View {
               : "Pin \(kind.title) at its current width. The slot keeps the pin when the section leaves, holding the space open.")
     }
 
-    /// Collapse / Normal / Maximize, with the live state lit. Three explicit states
-    /// beat a splitter drag for the ones you actually mean, and make "hidden" a place
-    /// you can deliberately go and come back from.
+    /// How big — Normal or Full Width — with the live state lit. Collapse is NOT a
+    /// segment here: "how big" and "shown or hidden" are different questions, and
+    /// having collapse buried among two lookalike glyphs is why ✕ got hit instead. It
+    /// has its own button next to Close.
     private var sizeStateControl: some View {
         HStack(spacing: 0) {
-            stateButton(.collapsed, symbol: "arrow.right.and.line.vertical.and.arrow.left",
-                        help: "Collapse \(kind.title) to a rail")
             stateButton(.normal, symbol: "rectangle.split.2x1",
                         help: "\(kind.title) at its normal size")
             stateButton(.maximized, symbol: "arrow.left.and.line.vertical.and.arrow.right",
@@ -142,8 +159,9 @@ struct SectionHeaderView: View {
         let drag = slot.isFloating
             ? "Drag to re-anchor the floating \(kind.title) to another edge"
             : "Drag to move \(kind.title) into another slot"
-        guard let detail = kind.detail else { return "\(kind.title)\n\(drag)" }
-        return "\(kind.title) — \(detail)\n\(drag)"
+        let fold = "Double-click to collapse"
+        guard let detail = kind.detail else { return "\(kind.title)\n\(drag)\n\(fold)" }
+        return "\(kind.title) — \(detail)\n\(drag)\n\(fold)"
     }
 
     @ViewBuilder
