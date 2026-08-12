@@ -62,7 +62,19 @@ final class TerminalSessionManager {
     /// transition, live window drag) produces exactly one SwiftTerm reflow + PTY
     /// winsize at the final size.
     func setSize(_ size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
+        // A degenerate geometry is REJECTED outright, not clamped and not applied. The
+        // old `> 1` test let a ~27pt container through as a two-column grid, and a
+        // resumed session flooding its history in at two columns re-breaks every
+        // wrapped line permanently — widening again cannot undo it. Anything this
+        // small is a container mid-collapse or mid-transition, so the last good size
+        // is the correct thing to keep.
+        guard TerminalMetrics.isUsable(size) else {
+            if CFDebug.geometry {
+                print("[geom] REJECTED degenerate container=\(Int(size.width))×\(Int(size.height)) " +
+                      "(\(TerminalMetrics.columns(forWidth: size.width)) cols) — keeping \(Int(currentSize.width))×\(Int(currentSize.height))")
+            }
+            return
+        }
         guard hasAppliedRealSize else {
             hasAppliedRealSize = true
             applySize(size)
@@ -125,7 +137,7 @@ final class TerminalSessionManager {
     /// stale-width live region that a plain repaint can't fix. `size` is the
     /// container's real bounds, read at call time (not the possibly-stale cached size).
     func resync(to size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
+        guard TerminalMetrics.isUsable(size) else { return }
         resizeDebounce?.cancel()
         resizeDebounce = nil
         pendingSize = nil

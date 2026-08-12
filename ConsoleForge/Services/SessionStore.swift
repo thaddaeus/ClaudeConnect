@@ -121,7 +121,15 @@ class SessionStore {
         if config.continueSession {
             return (config, false)
         }
-        if wantsResume, config.claudeSessionID != nil {
+        // Only resume a session Claude actually wrote. A tab that was closed before its
+        // first turn has a pinned id but no transcript, and `--resume <missing-id>`
+        // does not fail cleanly — the CLI falls back to another session in the same
+        // working directory and floods that conversation's history into the tab. On a
+        // shared cwd like `~` that is someone else's multi-megabyte transcript, which
+        // is both wrong and, if the terminal is mid-resize when it lands, a reflow
+        // storm. No transcript means this is a fresh launch, not a resume.
+        if wantsResume, let sid = config.claudeSessionID,
+           ClaudeTranscript.url(workingDirectory: config.workingDirectory, claudeSessionID: sid) != nil {
             // Resuming an existing conversation — don't re-fire the initial prompt.
             config.initialPrompt = nil
             return (config, true)

@@ -120,7 +120,10 @@ struct TerminalContainerView: View {
     /// lockstep). The first real size flips `hasRealSize` and kicks the initial
     /// reconcile, so sessions are created already sized to the real area.
     private func handleSizeChange(_ size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
+        // Same floor the manager applies, checked here too so `hasRealSize` cannot flip
+        // on a degenerate geometry — otherwise sessions would be BORN two columns wide
+        // and a resumed history would flood in at that width.
+        guard TerminalMetrics.isUsable(size) else { return }
         manager.setSize(size)
         if !hasRealSize {
             hasRealSize = true

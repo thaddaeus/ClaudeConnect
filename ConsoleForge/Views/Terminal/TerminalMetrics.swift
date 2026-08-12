@@ -59,4 +59,22 @@ enum TerminalMetrics {
     static var minimumHeight: CGFloat {
         (cellHeight * CGFloat(standardRows)).rounded(.up)
     }
+
+    /// Absolute floor for a REFLOW — far below the 80-column layout floor, because
+    /// this is not a preference, it is a corruption guard.
+    ///
+    /// Reflowing SwiftTerm to a couple of columns destroys the buffer model
+    /// permanently (tasks 9543 / 9487): every wrapped line is re-broken at that width
+    /// and widening again does not put it back. A geometry this small is never
+    /// something the user asked for — it is a container mid-collapse, mid-transition,
+    /// or a slot the layout engine starved. The right response is to IGNORE it and
+    /// keep the last good size, not to faithfully apply it.
+    static let minimumReflowColumns = 20
+    static let minimumReflowRows = 4
+
+    /// Whether a container size is worth reflowing the terminal to.
+    static func isUsable(_ size: CGSize) -> Bool {
+        columns(forWidth: size.width) >= minimumReflowColumns
+            && rows(forHeight: size.height) >= minimumReflowRows
+    }
 }

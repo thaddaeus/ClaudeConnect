@@ -295,6 +295,19 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             collapsed.insert(starved.id)
         }
 
+        // The loop above stops before collapsing the last slot standing, which left a
+        // hole: a lone console still pinned at a tiny fraction (a leftover from a
+        // splitter drag) was laid out at its fraction — ~24pt, TWO COLUMNS — and a
+        // resumed history flooding in at that width corrupts the SwiftTerm buffer for
+        // good. A slot that cannot be collapsed gets its floor instead, capped at the
+        // space actually available. Slots that are merely pinned small alongside others
+        // are untouched, so a lone 50% pin still leaves 50% empty (rule 3).
+        let survivors = allTiled.filter { !collapsed.contains($0.id) }
+        if survivors.count == 1, let only = survivors.first {
+            let available = size.width - CGFloat(collapsed.count) * WorkspaceLayout.collapsedRailWidth
+            widths[only.id] = min(max(widths[only.id] ?? 0, floor(only)), max(0, available))
+        }
+
         var x: CGFloat = 0
         var previousTiled: SlotID?
         for id in SlotID.allCases {
