@@ -109,8 +109,10 @@ final class LayoutStore {
     /// keeps its combined share and nothing beyond the boundary moves.
     func resizeBoundary(leading: SlotID, trailing: SlotID, leadingFraction: Double,
                         trailingFraction: Double?, windowWidth: CGFloat) {
-        let floor = max(Double(WorkspaceLayout.minSlotWidth) / Double(max(windowWidth, 1)),
-                        WorkspaceLayout.minPinnedFraction)
+        // Deliberately a hair above zero, not the section's minimum width: dragging a
+        // section below its minimum is how you collapse it to a rail. The layout engine
+        // decides where that threshold is; the drag just has to be able to cross it.
+        let floor = WorkspaceLayout.minPinnedFraction
         guard let trailingFraction else {
             layout[leading].isPinned = true
             layout[leading].pinnedFraction = min(max(leadingFraction, floor), 1.0 - floor)
@@ -123,6 +125,27 @@ final class LayoutStore {
         layout[leading].pinnedFraction = newLeading
         layout[trailing].isPinned = true
         layout[trailing].pinnedFraction = max(total - newLeading, floor)
+        commit()
+    }
+
+    /// Bring a collapsed slot back: make it flexible, and if pinned neighbours are what
+    /// crowded it out, scale them down until `minFraction` of the window is free. The
+    /// only escape from a rail, so it must always succeed.
+    func restore(_ id: SlotID, minFraction: Double) {
+        layout[id].isPinned = false
+        layout[id].isFloating = false
+        let others = layout.slots.filter {
+            $0.id != id && $0.section != nil && !$0.isFloating && $0.isPinned
+        }
+        let sum = others.reduce(0.0) { $0 + $1.pinnedFraction }
+        let budget = max(0, 1.0 - minFraction)
+        if sum > budget, sum > 0 {
+            let scale = budget / sum
+            for other in others {
+                layout[other.id].pinnedFraction =
+                    max(other.pinnedFraction * scale, WorkspaceLayout.minPinnedFraction)
+            }
+        }
         commit()
     }
 

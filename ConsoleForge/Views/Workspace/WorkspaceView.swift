@@ -26,7 +26,7 @@ struct WorkspaceView: View {
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let resolved = layout.layout.resolve(in: size)
+            let resolved = layout.layout.resolve(in: size, minWidths: Self.minWidths)
 
             ZStack(alignment: .topLeading) {
                 // Leftover that no flexible slot absorbed shows through here as
@@ -39,6 +39,8 @@ struct WorkspaceView: View {
                 if layout.isOpen(.browser) {
                     browserSection(resolved, size)
                 }
+
+                collapsedRails(resolved, size)
 
                 splitterHandles(resolved, size)
 
@@ -57,11 +59,19 @@ struct WorkspaceView: View {
 
     // MARK: - Sections
 
+    /// Per-section width floors handed to the layout engine. The console's is a
+    /// standard 80-column terminal at the live font; below that it collapses to a rail
+    /// instead of rendering a terminal too narrow to be read.
+    private static var minWidths: [SectionKind: CGFloat] {
+        [.console: TerminalMetrics.minimumWidth, .browser: 320]
+    }
+
     private func consoleSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         // The console always holds a slot (WorkspaceLayout.normalize guarantees it)
-        // and never floats, so it always has a tiled rect.
+        // and never floats, so it always has a frame — zero-width while collapsed.
         let slot = layout.slot(holding: .console) ?? SlotConfiguration(id: .center, section: .console)
-        let rect = resolved.tiled[slot.id] ?? CGRect(origin: .zero, size: size)
+        let rect = resolved.renderFrame(for: slot.id, height: size.height)
+            ?? CGRect(origin: .zero, size: size)
         return sectionFrame(kind: .console, slot: slot, rect: rect, size: size) {
             TerminalContainerView()
         }
@@ -70,7 +80,7 @@ struct WorkspaceView: View {
     @ViewBuilder
     private func browserSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         if let slot = layout.slot(holding: .browser),
-           let rect = resolved.frame(for: slot.id),
+           let rect = resolved.renderFrame(for: slot.id, height: size.height),
            let browser {
             sectionFrame(kind: .browser, slot: slot, rect: rect, size: size) {
                 BrowserSectionView(model: browser)
@@ -117,6 +127,49 @@ struct WorkspaceView: View {
         .zIndex(slot.isFloating ? 10 : 0)
     }
 
+    // MARK: - Collapsed rails
+
+    /// A section that cannot reach its minimum width is not rendered — but it is not
+    /// gone either. It leaves a rail carrying its glyph, which is both the signal that
+    /// it is still there and the way back. Without this, dragging a splitter too far
+    /// would take the splitter with it and strand the section in the menus.
+    @ViewBuilder
+    private func collapsedRails(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        ForEach(SlotID.allCases) { id in
+            if let rect = resolved.collapsed[id], let kind = layout[id].section {
+                Button {
+                    layout.restore(id, minFraction: Double((Self.minWidths[kind]
+                        ?? WorkspaceLayout.minSlotWidth) / max(size.width, 1)))
+                } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: kind.symbol)
+                            .font(.system(size: 11))
+                        Image(systemName: "chevron.compact.right")
+                            .font(.system(size: 9))
+                        Spacer()
+                    }
+                    .padding(.top, 6)
+                    .frame(width: rect.width, height: rect.height)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .overlay(alignment: .trailing) { Divider() }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(collapsedHelp(kind))
+                .offset(x: rect.minX, y: rect.minY)
+                .zIndex(4)
+            }
+        }
+    }
+
+    private func collapsedHelp(_ kind: SectionKind) -> String {
+        let reason = kind == .console
+            ? "narrower than a standard \(TerminalMetrics.standardColumns)-column terminal"
+            : "too narrow to show"
+        return "\(kind.title) is hidden — \(reason). Click to restore."
+    }
+
     // MARK: - Splitters
 
     @ViewBuilder
@@ -146,10 +199,21 @@ struct WorkspaceView: View {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
                 guard size.width > 0 else { return }
-                let drag = splitterDrag ?? {
+                // Keyed by the gesture's start location as well as the splitter, because
+                // dragging a section past its minimum collapses it — which removes this
+                // splitter mid-gesture, so `onEnded` never fires and stale state would
+                // otherwise be reused as the base for the next drag.
+                let drag: SplitterDrag
+                if let existing = splitterDrag,
+                   existing.id == splitter.id,
+                   existing.startX == value.startLocation.x {
+                    drag = existing
+                } else {
                     let leadingWidth = resolved.tiled[splitter.leading]?.width ?? 0
                     let trailingWidth = resolved.tiled[splitter.trailing]?.width ?? 0
-                    let state = SplitterDrag(
+                    drag = SplitterDrag(
+                        id: splitter.id,
+                        startX: value.startLocation.x,
                         leading: splitter.leading,
                         trailing: splitter.trailing,
                         leadingFraction: Double(leadingWidth / size.width),
@@ -158,9 +222,8 @@ struct WorkspaceView: View {
                         trailingFraction: layout[splitter.trailing].isPinned
                             ? Double(trailingWidth / size.width) : nil
                     )
-                    splitterDrag = state
-                    return state
-                }()
+                    splitterDrag = drag
+                }
                 let delta = Double(value.translation.width / size.width)
                 layout.resizeBoundary(
                     leading: drag.leading,
@@ -294,6 +357,8 @@ struct WorkspaceView: View {
     // MARK: - Drag state
 
     private struct SplitterDrag {
+        var id: String
+        var startX: CGFloat
         var leading: SlotID
         var trailing: SlotID
         var leadingFraction: Double

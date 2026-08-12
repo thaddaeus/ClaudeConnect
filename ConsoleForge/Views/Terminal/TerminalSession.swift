@@ -49,10 +49,10 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         // and force a redraw so the rendered surface re-syncs to the SwiftTerm model.
         installRepaintObservers(for: terminalView)
 
-        // Configure appearance - match Terminal.app default (Menlo 11pt)
-        let fontSize: CGFloat = 11
-        terminalView.font = NSFont(name: "Menlo", size: fontSize)
-            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        // Configure appearance - match Terminal.app default (Menlo 11pt). Owned by
+        // TerminalMetrics, which also derives the layout engine's 80-column minimum
+        // console width from it — the two must not drift.
+        terminalView.font = TerminalMetrics.font
         terminalView.nativeBackgroundColor = DefaultTheme.background
         terminalView.nativeForegroundColor = DefaultTheme.foreground
         terminalView.optionAsMetaKey = true

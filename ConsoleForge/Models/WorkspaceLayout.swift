@@ -211,11 +211,12 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         slots = repaired
     }
 
-    static let minPinnedFraction: Double = 0.1
-    /// No occupied tiled slot is ever laid out narrower than this. A terminal reflowed
-    /// to a handful of columns and back is exactly the buffer-model corruption this
-    /// project has been burned by twice.
+    static let minPinnedFraction: Double = 0.02
+    /// Fallback floor for a section that declares no minimum of its own.
     static let minSlotWidth: CGFloat = 240
+    /// Width of the rail a collapsed section leaves behind — enough for its glyph, and
+    /// the only way back, so a section can never be shrunk into oblivion.
+    static let collapsedRailWidth: CGFloat = 22
 
     // MARK: - Size arithmetic
 
@@ -233,71 +234,67 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     ///    right edge.
     /// 4. Pins summing over the available width scale down proportionally.
     /// 5. Flexible slots are guaranteed `minSlotWidth`; pins scale down to make room.
-    func resolve(in size: CGSize) -> ResolvedWorkspaceLayout {
+    /// 6. A slot that cannot reach its section's minimum width COLLAPSES to a rail
+    ///    rather than rendering a uselessly narrow section. For the console that
+    ///    minimum is a standard 80-column terminal (`TerminalMetrics.minimumWidth`) —
+    ///    below it, output written to wrap at 80 wraps mid-word instead. The last
+    ///    remaining tiled slot never collapses; something has to be on screen.
+    ///
+    /// `minWidths` is supplied by the view layer, which knows the terminal font.
+    func resolve(in size: CGSize, minWidths: [SectionKind: CGFloat] = [:]) -> ResolvedWorkspaceLayout {
         var result = ResolvedWorkspaceLayout()
         guard size.width > 0, size.height > 0 else { return result }
 
         let occupied = slots.filter { $0.section != nil }
-        let tiled = occupied.filter { !$0.isFloating }.sorted { $0.id.order < $1.id.order }
+        let allTiled = occupied.filter { !$0.isFloating }.sorted { $0.id.order < $1.id.order }
 
         for slot in occupied where slot.isFloating {
             result.floating[slot.id] = slot.floatingFrame.resolved(
                 in: size, minWidth: WorkspaceLayout.minSlotWidth, minHeight: 180)
         }
 
-        guard !tiled.isEmpty else { return result }
+        guard !allTiled.isEmpty else { return result }
 
-        let flexible = tiled.filter { !$0.isPinned }
-        // Widths are computed purely as fractions so they always sum to ≤ 1 — a slot
-        // is floored by raising its FRACTION, never by widening the resolved frame
-        // (which would silently overflow the window).
-        let minFraction = min(Double(WorkspaceLayout.minSlotWidth) / Double(size.width), 0.4)
-        var effectivePin: [SlotID: Double] = [:]
-        for slot in tiled where slot.isPinned {
-            effectivePin[slot.id] = max(slot.pinnedFraction, minFraction)
-        }
-        var pinnedSum = effectivePin.values.reduce(0, +)
-
-        // Rule 5 then rule 4: reserve the flexible minimum, then fit the pins into
-        // whatever is left. With no flexible slot `reserved` is 0 and this degenerates
-        // to the plain over-100% proportional scale-down.
-        let reserved = min(Double(flexible.count) * minFraction, 0.9)
-        var pinScale = 1.0
-        let pinBudget = max(0, 1.0 - reserved)
-        if pinnedSum > pinBudget, pinnedSum > 0 {
-            pinScale = pinBudget / pinnedSum
-            pinnedSum = pinBudget
+        func floor(_ slot: SlotConfiguration) -> CGFloat {
+            slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
         }
 
-        let leftover = max(0, 1.0 - pinnedSum)
-        let flexEach = flexible.isEmpty ? 0 : leftover / Double(flexible.count)
-
-        // Rule 3: unabsorbed leftover is handed back to the holes — floating slots
-        // first, at the width they used to occupy — so the pinned tiles stay put.
-        var holeWidths: [SlotID: Double] = [:]
-        if flexible.isEmpty, leftover > 0 {
-            var claims: [SlotID: Double] = [:]
-            for slot in slots where slot.isFloating && slot.section != nil && slot.isPinned {
-                claims[slot.id] = slot.pinnedFraction
-            }
-            let claimSum = claims.values.reduce(0, +)
-            let claimScale = claimSum > leftover ? leftover / claimSum : 1.0
-            for (id, claim) in claims {
-                holeWidths[id] = claim * claimScale
-            }
+        // Collapse pass: widen the collapsed set one slot at a time until every
+        // surviving slot clears its floor. Bounded by the slot count, so at most a
+        // couple of iterations.
+        var collapsed: Set<SlotID> = []
+        var widths: [SlotID: CGFloat] = [:]
+        var holes: [SlotID: CGFloat] = [:]
+        while true {
+            let active = allTiled.filter { !collapsed.contains($0.id) }
+            let pass = tileWidths(active: active,
+                                  railCount: collapsed.count,
+                                  size: size)
+            widths = pass.widths
+            holes = pass.holes
+            guard active.count > 1,
+                  let starved = active.first(where: { (widths[$0.id] ?? 0) + 0.5 < floor($0) })
+            else { break }
+            collapsed.insert(starved.id)
         }
 
         var x: CGFloat = 0
         var previousTiled: SlotID?
         for id in SlotID.allCases {
-            if let hole = holeWidths[id] {
-                x += CGFloat(hole) * size.width
-                previousTiled = nil          // a gap breaks adjacency: no splitter across it
+            if collapsed.contains(id) {
+                result.collapsed[id] = CGRect(x: x, y: 0,
+                                              width: WorkspaceLayout.collapsedRailWidth,
+                                              height: size.height)
+                x += WorkspaceLayout.collapsedRailWidth
+                previousTiled = nil          // a rail breaks adjacency: no splitter across it
                 continue
             }
-            guard let slot = tiled.first(where: { $0.id == id }) else { continue }
-            let fraction = slot.isPinned ? (effectivePin[id] ?? 0) * pinScale : flexEach
-            let width = CGFloat(fraction) * size.width
+            if let hole = holes[id] {
+                x += hole
+                previousTiled = nil          // a gap breaks adjacency either
+                continue
+            }
+            guard let width = widths[id] else { continue }
             result.tiled[id] = CGRect(x: x, y: 0, width: width, height: size.height)
             if let previousTiled {
                 result.splitters.append(SplitterPosition(leading: previousTiled, trailing: id, x: x))
@@ -307,6 +304,59 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         }
         result.emptyTrailingWidth = max(0, size.width - x)
         return result
+    }
+
+    /// One sizing pass over the slots that are still tiled. Widths are computed purely
+    /// as fractions of the window so they always sum to ≤ 1 — a slot is never widened
+    /// past its share to meet a floor, because that would silently overflow the window.
+    /// Falling short of the floor is what the collapse pass acts on instead.
+    private func tileWidths(active: [SlotConfiguration],
+                            railCount: Int,
+                            size: CGSize) -> (widths: [SlotID: CGFloat], holes: [SlotID: CGFloat]) {
+        guard !active.isEmpty else { return ([:], [:]) }
+        // Rails come off the top; the rest of the window is what fractions divide.
+        let usable = max(0, Double(size.width) - Double(railCount) * Double(WorkspaceLayout.collapsedRailWidth))
+        let budget = usable / Double(size.width)
+
+        let flexible = active.filter { !$0.isPinned }
+        var pinnedSum = active.filter(\.isPinned).reduce(0.0) { $0 + $1.pinnedFraction }
+
+        // Reserve a share for the flexible slots, then fit the pins into what is left.
+        // With no flexible slot `reserved` is 0 and this degenerates to the plain
+        // over-100% proportional scale-down (rule 4).
+        let reserved = min(Double(flexible.count) * Double(WorkspaceLayout.minSlotWidth) / Double(size.width),
+                           budget * 0.9)
+        var pinScale = 1.0
+        let pinBudget = max(0, budget - reserved)
+        if pinnedSum > pinBudget, pinnedSum > 0 {
+            pinScale = pinBudget / pinnedSum
+            pinnedSum = pinBudget
+        }
+
+        let leftover = max(0, budget - pinnedSum)
+        let flexEach = flexible.isEmpty ? 0 : leftover / Double(flexible.count)
+
+        var widths: [SlotID: CGFloat] = [:]
+        for slot in active {
+            let fraction = slot.isPinned ? slot.pinnedFraction * pinScale : flexEach
+            widths[slot.id] = CGFloat(fraction) * size.width
+        }
+
+        // Rule 3: unabsorbed leftover is handed back to the holes — floating slots
+        // first, at the width they used to occupy — so the pinned tiles stay put.
+        var holes: [SlotID: CGFloat] = [:]
+        if flexible.isEmpty, leftover > 0 {
+            var claims: [SlotID: Double] = [:]
+            for slot in slots where slot.isFloating && slot.section != nil && slot.isPinned {
+                claims[slot.id] = slot.pinnedFraction
+            }
+            let claimSum = claims.values.reduce(0, +)
+            let claimScale = claimSum > leftover ? leftover / claimSum : 1.0
+            for (id, claim) in claims {
+                holes[id] = CGFloat(claim * claimScale) * size.width
+            }
+        }
+        return (widths, holes)
     }
 }
 
@@ -323,6 +373,9 @@ struct ResolvedWorkspaceLayout: Equatable {
     var tiled: [SlotID: CGRect] = [:]
     /// Frames for occupied, floating slots (overlaid; consume no layout space).
     var floating: [SlotID: CGRect] = [:]
+    /// Rails for slots too narrow to render their section. The section stays alive and
+    /// unresized behind the rail; clicking it restores the slot.
+    var collapsed: [SlotID: CGRect] = [:]
     var splitters: [SplitterPosition] = []
     /// Leftover that no flexible slot absorbed, rendered as empty space at the
     /// trailing edge.
@@ -330,5 +383,18 @@ struct ResolvedWorkspaceLayout: Equatable {
 
     func frame(for id: SlotID) -> CGRect? {
         tiled[id] ?? floating[id]
+    }
+
+    /// Where a section should be RENDERED: its tile or float, or a zero-width sliver at
+    /// its rail when collapsed. Collapsed sections stay in the view tree at zero width
+    /// rather than being removed — the hosted NSView (a live terminal, a loaded page) is
+    /// then never dismantled, and the terminal is never resized, because a zero width
+    /// is rejected by the guard on the way into `TerminalSessionManager.setSize`.
+    func renderFrame(for id: SlotID, height: CGFloat) -> CGRect? {
+        if let frame = tiled[id] ?? floating[id] { return frame }
+        if let rail = collapsed[id] {
+            return CGRect(x: rail.minX, y: 0, width: 0, height: height)
+        }
+        return nil
     }
 }

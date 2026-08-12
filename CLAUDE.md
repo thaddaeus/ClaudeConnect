@@ -144,6 +144,17 @@ feature — *the console must not resize when a browser closes*:
   That empty space is placed back at the slots that gave it up (a floating slot leaves
   its former width as a gap), so pinned tiles do not move when a neighbour floats.
 - Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.
+- A slot that cannot reach its section's minimum width **collapses to a 22pt rail**
+  rather than rendering a useless sliver. The console's minimum is a standard
+  **80 columns** (`TerminalMetrics.minimumWidth` — measured from the live font, ≈544pt
+  at Menlo 11pt), because output written to wrap at 80 wraps mid-word below that. The
+  last remaining tiled slot never collapses. Clicking the rail restores the slot.
+  A collapsed section stays in the view tree at **zero width** — never removed, so its
+  NSView survives, and never resized, because a zero width is rejected on the way into
+  `setSize`.
+
+`TerminalMetrics` owns the terminal font; `TerminalSession` reads it from there so the
+rendered font and the layout engine's column arithmetic cannot drift.
 
 **The load-bearing rule (tasks 9543 / 9487 — permanent terminal garble is SwiftTerm
 BUFFER MODEL corruption from reflowing at a wrong size):** every section is rendered
