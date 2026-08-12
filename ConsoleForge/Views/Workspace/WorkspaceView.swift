@@ -21,7 +21,7 @@ struct WorkspaceView: View {
     @State private var draggingSection: SectionKind?
     @State private var hoveredDropSlot: SlotID?
     @State private var splitterDrag: SplitterDrag?
-    @State private var floatDrag: FloatDrag?
+    @State private var floatEdgeDrag: FloatEdgeDrag?
     @State private var dragFeedback: BoundaryFeedback = .free
 
     var body: some View {
@@ -114,11 +114,7 @@ struct WorkspaceView: View {
                     kind: kind,
                     slot: slot,
                     layout: layout,
-                    draggingSection: $draggingSection,
-                    onFloatingMove: slot.isFloating ? { translation in
-                        moveFloating(slot.id, by: translation, base: rect, in: size)
-                    } : nil,
-                    onFloatingMoveEnded: { floatDrag = nil }
+                    draggingSection: $draggingSection
                 )
             }
             content()
@@ -128,9 +124,9 @@ struct WorkspaceView: View {
         .clipped()
         .background(Color(nsColor: .windowBackgroundColor))
         .modifier(FloatingDecoration(isFloating: slot.isFloating))
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: slot.id.floatsToTrailingEdge ? .leading : .trailing) {
             if slot.isFloating {
-                floatResizeHandle(slot.id, base: rect, in: size)
+                floatEdgeGrabber(slot.id, base: rect, in: size)
             }
         }
         .offset(x: rect.minX, y: rect.minY)
@@ -155,21 +151,25 @@ struct WorkspaceView: View {
                     VStack(spacing: 6) {
                         Image(systemName: kind.symbol)
                             .font(.system(size: 11))
-                        Image(systemName: "chevron.compact.right")
+                        // Points the way the panel will expand, which depends on the
+                        // edge it is docked to.
+                        Image(systemName: id.floatsToTrailingEdge ? "chevron.compact.left" : "chevron.compact.right")
                             .font(.system(size: 9))
                         Spacer()
                     }
                     .padding(.top, 6)
                     .frame(width: rect.width, height: rect.height)
                     .background(Color(nsColor: .windowBackgroundColor))
-                    .overlay(alignment: .trailing) { Divider() }
+                    .overlay(alignment: id.floatsToTrailingEdge ? .leading : .trailing) { Divider() }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help(collapsedHelp(kind))
                 .offset(x: rect.minX, y: rect.minY)
-                .zIndex(4)
+                // A floating panel's rail overlays too — it must sit above the tiled
+                // sections, not get painted under them.
+                .zIndex(layout[id].isFloating ? 12 : 4)
             }
         }
     }
@@ -213,6 +213,10 @@ struct WorkspaceView: View {
 
     private func splitterColor(_ splitter: SplitterPosition) -> Color {
         guard splitterIsActive(splitter) else { return Color(nsColor: .separatorColor) }
+        return splitterActiveColor
+    }
+
+    private var splitterActiveColor: Color {
         if case .willCollapse = dragFeedback { return .orange }
         return .accentColor
     }
@@ -280,9 +284,11 @@ struct WorkspaceView: View {
     /// something you SEE rather than something that just happens.
     @ViewBuilder
     private func dragReadouts(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
-        if let drag = splitterDrag {
-            ForEach([drag.leading, drag.trailing], id: \.self) { id in
-                if let rect = resolved.tiled[id], let kind = layout[id].section {
+        let subjects: [SlotID] = splitterDrag.map { [$0.leading, $0.trailing] }
+            ?? floatEdgeDrag.map { [$0.slot] } ?? []
+        if !subjects.isEmpty {
+            ForEach(subjects, id: \.self) { id in
+                if let rect = resolved.frame(for: id), let kind = layout[id].section {
                     readout(for: kind, rect: rect, isSubject: dragFeedback.slot == id)
                         .offset(x: rect.midX - 70, y: rect.midY - 18)
                         .frame(width: 140, height: 36)
@@ -327,47 +333,52 @@ struct WorkspaceView: View {
 
     // MARK: - Floating
 
-    private func moveFloating(_ id: SlotID, by translation: CGSize, base: CGRect, in size: CGSize) {
-        let origin = floatDrag?.origin ?? {
-            let state = FloatDrag(slot: id, origin: base.origin)
-            floatDrag = state
-            return state.origin
-        }()
-        let moved = CGRect(x: origin.x + translation.width,
-                           y: origin.y + translation.height,
-                           width: base.width,
-                           height: base.height)
-        layout.setFloatingFrame(id, moved, in: size)
-    }
-
-    private func floatResizeHandle(_ id: SlotID, base: CGRect, in size: CGSize) -> some View {
-        Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .font(.system(size: 9))
-            .foregroundStyle(.secondary)
-            .frame(width: 16, height: 16)
+    /// A floating panel is DOCKED: it keeps its slot's edge and full height, and only
+    /// its width is adjustable. Dragging this grabber changes that width and nothing
+    /// else — the tiled sections underneath are not consulted and do not move, which is
+    /// the entire point of floating. Overshooting the floor collapses it to an edge rail
+    /// on release, exactly like a tiled splitter.
+    private func floatEdgeGrabber(_ id: SlotID, base: CGRect, in size: CGSize) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 8)
+            .overlay {
+                Rectangle()
+                    .fill(floatEdgeDrag?.slot == id ? splitterActiveColor : Color(nsColor: .separatorColor))
+                    .frame(width: floatEdgeDrag?.slot == id ? 3 : 1)
+            }
             .contentShape(Rectangle())
             .onHover { inside in
-                if inside { NSCursor.crosshair.push() } else { NSCursor.pop() }
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
-                        let start = floatDrag?.origin ?? {
-                            let state = FloatDrag(slot: id, origin: CGPoint(x: base.width, y: base.height))
-                            floatDrag = state
-                            return state.origin
-                        }()
-                        let resized = CGRect(
-                            x: base.minX,
-                            y: base.minY,
-                            width: max(WorkspaceLayout.minSlotWidth, start.x + value.translation.width),
-                            height: max(180, start.y + value.translation.height)
-                        )
-                        layout.setFloatingFrame(id, resized, in: size)
+                        guard size.width > 0 else { return }
+                        let drag: FloatEdgeDrag
+                        if let existing = floatEdgeDrag,
+                           existing.slot == id, existing.startX == value.startLocation.x {
+                            drag = existing
+                        } else {
+                            drag = FloatEdgeDrag(slot: id, startX: value.startLocation.x,
+                                                 fraction: Double(base.width / size.width))
+                            floatEdgeDrag = drag
+                        }
+                        // Dragging the inner edge outward widens the panel; which
+                        // direction that is depends on the edge it is docked to.
+                        let delta = Double(value.translation.width / size.width)
+                        let signed = id.floatsToTrailingEdge ? -delta : delta
+                        dragFeedback = layout.resizeFloating(id, toFraction: drag.fraction + signed,
+                                                             windowWidth: size.width)
                     }
-                    .onEnded { _ in floatDrag = nil }
+                    .onEnded { _ in
+                        if case .willCollapse(let collapsing) = dragFeedback {
+                            layout.collapse(collapsing)
+                        }
+                        dragFeedback = .free
+                        floatEdgeDrag = nil
+                    }
             )
-            .padding(3)
     }
 
     // MARK: - Drag a section into a slot
@@ -454,9 +465,11 @@ struct WorkspaceView: View {
         var trailingFraction: Double?
     }
 
-    private struct FloatDrag {
+    private struct FloatEdgeDrag {
         var slot: SlotID
-        var origin: CGPoint
+        var startX: CGFloat
+        /// The panel's width fraction when the drag began.
+        var fraction: Double
     }
 }
 

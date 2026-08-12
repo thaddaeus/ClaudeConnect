@@ -60,33 +60,11 @@ enum SlotID: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// Left-to-right tiling order (declaration order).
     var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
-}
 
-/// A floating slot's frame, stored as fractions of the workspace so it survives a
-/// window resize and a display change.
-struct NormalizedRect: Codable, Equatable, Sendable {
-    var x: Double
-    var y: Double
-    var width: Double
-    var height: Double
-
-    static let defaultFloating = NormalizedRect(x: 0.42, y: 0.10, width: 0.52, height: 0.66)
-
-    func resolved(in size: CGSize, minWidth: CGFloat, minHeight: CGFloat) -> CGRect {
-        let w = min(max(width * size.width, minWidth), size.width)
-        let h = min(max(height * size.height, minHeight), size.height)
-        let px = min(max(x * size.width, 0), max(0, size.width - w))
-        let py = min(max(y * size.height, 0), max(0, size.height - h))
-        return CGRect(x: px, y: py, width: w, height: h)
-    }
-
-    static func from(_ rect: CGRect, in size: CGSize) -> NormalizedRect {
-        guard size.width > 0, size.height > 0 else { return .defaultFloating }
-        return NormalizedRect(x: rect.minX / size.width,
-                              y: rect.minY / size.height,
-                              width: rect.width / size.width,
-                              height: rect.height / size.height)
-    }
+    /// Which window edge a section floating in this slot stays pinned to. Floating is
+    /// a DOCKED overlay, not a free window: the panel keeps the edge its slot came
+    /// from and only stops consuming layout space.
+    var floatsToTrailingEdge: Bool { self == .right }
 }
 
 /// Everything a single slot decides for itself. Size and display are independent,
@@ -101,9 +79,9 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
     /// Fraction of the window width. Kept even while flexible so un-pinning and
     /// re-pinning returns to the last explicit size.
     var pinnedFraction: Double = 0.4
-    /// FLOATING: overlays the tiled sections and consumes no layout space.
+    /// FLOATING: overlays the tiled sections and consumes no layout space. The panel
+    /// stays docked to its slot's edge and keeps `pinnedFraction` as its width.
     var isFloating: Bool = false
-    var floatingFrame: NormalizedRect = .defaultFloating
     /// COLLAPSED by choice — the user dragged past the minimum and released, hit the
     /// collapse control, or maximized a sibling. Distinct from the *forced* collapse
     /// `resolve` applies when the window is simply too narrow: that one is derived and
@@ -115,14 +93,12 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
          isPinned: Bool = false,
          pinnedFraction: Double = 0.4,
          isFloating: Bool = false,
-         floatingFrame: NormalizedRect = .defaultFloating,
          isCollapsed: Bool = false) {
         self.id = id
         self.section = section
         self.isPinned = isPinned
         self.pinnedFraction = pinnedFraction
         self.isFloating = isFloating
-        self.floatingFrame = floatingFrame
         self.isCollapsed = isCollapsed
     }
 
@@ -135,7 +111,6 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         pinnedFraction = try c.decodeIfPresent(Double.self, forKey: .pinnedFraction) ?? 0.4
         isFloating = try c.decodeIfPresent(Bool.self, forKey: .isFloating) ?? false
-        floatingFrame = try c.decodeIfPresent(NormalizedRect.self, forKey: .floatingFrame) ?? .defaultFloating
         isCollapsed = try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
     }
 }
@@ -208,7 +183,6 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             config.pinnedFraction = min(max(config.pinnedFraction, WorkspaceLayout.minPinnedFraction), 1.0)
             if config.section?.canFloat == false { config.isFloating = false }
             if config.section == nil { config.isFloating = false; config.isCollapsed = false }
-            if config.isFloating { config.isCollapsed = false }
             repaired.append(config)
         }
         // The console must always have a home.
@@ -257,16 +231,28 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         let occupied = slots.filter { $0.section != nil }
         let allTiled = occupied.filter { !$0.isFloating }.sorted { $0.id.order < $1.id.order }
 
+        func floorWidth(_ slot: SlotConfiguration) -> CGFloat {
+            slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
+        }
+        func anchored(_ id: SlotID, width: CGFloat) -> CGRect {
+            CGRect(x: id.floatsToTrailingEdge ? size.width - width : 0,
+                   y: 0, width: width, height: size.height)
+        }
+
+        // Floating slots overlay the tiled ones at full height, docked to their slot's
+        // edge, and consume no layout space in ANY state — collapsed included. Nothing
+        // here touches the tiled arithmetic below, which is the point: toggling or
+        // resizing a floating panel must never move what is underneath it.
         for slot in occupied where slot.isFloating {
-            result.floating[slot.id] = slot.floatingFrame.resolved(
-                in: size, minWidth: WorkspaceLayout.minSlotWidth, minHeight: 180)
+            if slot.isCollapsed {
+                result.collapsed[slot.id] = anchored(slot.id, width: WorkspaceLayout.collapsedRailWidth)
+            } else {
+                let width = min(max(CGFloat(slot.pinnedFraction) * size.width, floorWidth(slot)), size.width)
+                result.floating[slot.id] = anchored(slot.id, width: width)
+            }
         }
 
         guard !allTiled.isEmpty else { return result }
-
-        func floor(_ slot: SlotConfiguration) -> CGFloat {
-            slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
-        }
 
         // Slots the user collapsed on purpose start out collapsed. Never leave the
         // window with nothing in it — the console (failing that, the first tiled slot)
@@ -281,16 +267,11 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // surviving slot clears its floor. Bounded by the slot count, so at most a
         // couple of iterations.
         var widths: [SlotID: CGFloat] = [:]
-        var holes: [SlotID: CGFloat] = [:]
         while true {
             let active = allTiled.filter { !collapsed.contains($0.id) }
-            let pass = tileWidths(active: active,
-                                  railCount: collapsed.count,
-                                  size: size)
-            widths = pass.widths
-            holes = pass.holes
+            widths = tileWidths(active: active, railCount: collapsed.count, size: size)
             guard active.count > 1,
-                  let starved = active.first(where: { (widths[$0.id] ?? 0) + 0.5 < floor($0) })
+                  let starved = active.first(where: { (widths[$0.id] ?? 0) + 0.5 < floorWidth($0) })
             else { break }
             collapsed.insert(starved.id)
         }
@@ -305,7 +286,7 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         let survivors = allTiled.filter { !collapsed.contains($0.id) }
         if survivors.count == 1, let only = survivors.first {
             let available = size.width - CGFloat(collapsed.count) * WorkspaceLayout.collapsedRailWidth
-            widths[only.id] = min(max(widths[only.id] ?? 0, floor(only)), max(0, available))
+            widths[only.id] = min(max(widths[only.id] ?? 0, floorWidth(only)), max(0, available))
         }
 
         var x: CGFloat = 0
@@ -317,11 +298,6 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
                                               height: size.height)
                 x += WorkspaceLayout.collapsedRailWidth
                 previousTiled = nil          // a rail breaks adjacency: no splitter across it
-                continue
-            }
-            if let hole = holes[id] {
-                x += hole
-                previousTiled = nil          // a gap breaks adjacency either
                 continue
             }
             guard let width = widths[id] else { continue }
@@ -342,8 +318,8 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     /// Falling short of the floor is what the collapse pass acts on instead.
     private func tileWidths(active: [SlotConfiguration],
                             railCount: Int,
-                            size: CGSize) -> (widths: [SlotID: CGFloat], holes: [SlotID: CGFloat]) {
-        guard !active.isEmpty else { return ([:], [:]) }
+                            size: CGSize) -> [SlotID: CGFloat] {
+        guard !active.isEmpty else { return [:] }
         // Rails come off the top; the rest of the window is what fractions divide.
         let usable = max(0, Double(size.width) - Double(railCount) * Double(WorkspaceLayout.collapsedRailWidth))
         let budget = usable / Double(size.width)
@@ -372,21 +348,7 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             widths[slot.id] = CGFloat(fraction) * size.width
         }
 
-        // Rule 3: unabsorbed leftover is handed back to the holes — floating slots
-        // first, at the width they used to occupy — so the pinned tiles stay put.
-        var holes: [SlotID: CGFloat] = [:]
-        if flexible.isEmpty, leftover > 0 {
-            var claims: [SlotID: Double] = [:]
-            for slot in slots where slot.isFloating && slot.section != nil && slot.isPinned {
-                claims[slot.id] = slot.pinnedFraction
-            }
-            let claimSum = claims.values.reduce(0, +)
-            let claimScale = claimSum > leftover ? leftover / claimSum : 1.0
-            for (id, claim) in claims {
-                holes[id] = CGFloat(claim * claimScale) * size.width
-            }
-        }
-        return (widths, holes)
+        return widths
     }
 }
 

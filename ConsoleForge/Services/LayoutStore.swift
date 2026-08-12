@@ -127,9 +127,26 @@ final class LayoutStore {
         commit()
     }
 
-    func setFloatingFrame(_ id: SlotID, _ rect: CGRect, in size: CGSize) {
-        layout[id].floatingFrame = NormalizedRect.from(rect, in: size)
+    /// Drag of a floating panel's INNER edge. Only the panel's own width changes —
+    /// the tiled layout underneath is not consulted and never moves, which is the
+    /// whole point of floating. Same detent as a tiled splitter: clamps at the floor,
+    /// and `.willCollapse` past the overshoot is committed by the caller on release.
+    @discardableResult
+    func resizeFloating(_ id: SlotID, toFraction fraction: Double, windowWidth: CGFloat) -> BoundaryFeedback {
+        let width = max(windowWidth, 1)
+        let floor = max(minFraction(id), WorkspaceLayout.minPinnedFraction)
+        let overshoot = Double(Self.collapseOvershoot / width)
+
+        var feedback = BoundaryFeedback.free
+        if fraction < floor - overshoot {
+            feedback = .willCollapse(id)
+        } else if fraction <= floor {
+            feedback = .atMinimum(id)
+        }
+        layout[id].isPinned = true
+        layout[id].pinnedFraction = min(max(fraction, floor), 1.0)
         commit()
+        return feedback
     }
 
     /// How far past a section's minimum width the pointer must travel before releasing
@@ -210,22 +227,30 @@ final class LayoutStore {
     }
 
     func collapse(_ id: SlotID) {
-        guard layout[id].section != nil, !layout[id].isFloating else { return }
+        guard layout[id].section != nil else { return }
         layout[id].isCollapsed = true
         if maximizedSlot == id { maximizedSlot = nil }
         commit()
     }
 
-    /// Full width. Every other TILED section collapses to a rail to make room —
-    /// floating sections are untouched, since they overlay rather than compete for
-    /// width. `normal` puts it all back.
+    /// Full width.
+    ///
+    /// A FLOATING panel simply widens to the whole window — it is an overlay, so it
+    /// takes no space from anything and the tiled layout underneath is untouched.
+    /// A TILED section has to actually take the room, so every other tiled section
+    /// collapses to a rail; floating ones still stay put. `normal` puts it all back.
     func maximize(_ id: SlotID) {
-        guard layout[id].section != nil, !layout[id].isFloating else { return }
+        guard layout[id].section != nil else { return }
         if restorePoint == nil { restorePoint = layout }
         layout[id].isCollapsed = false
-        layout[id].isPinned = false
-        for slot in layout.slots where slot.id != id && slot.section != nil && !slot.isFloating {
-            layout[slot.id].isCollapsed = true
+        if layout[id].isFloating {
+            layout[id].isPinned = true
+            layout[id].pinnedFraction = 1.0
+        } else {
+            layout[id].isPinned = false
+            for slot in layout.slots where slot.id != id && slot.section != nil && !slot.isFloating {
+                layout[slot.id].isCollapsed = true
+            }
         }
         maximizedSlot = id
         commit()
@@ -252,9 +277,11 @@ final class LayoutStore {
     /// crowded it out, scale them down until `minFraction` of the window is free. The
     /// only escape from a rail, so it must always succeed.
     func restore(_ id: SlotID, minFraction: Double) {
-        layout[id].isPinned = false
-        layout[id].isFloating = false
         layout[id].isCollapsed = false
+        // A floating panel is restored by simply un-collapsing it: it overlays, so it
+        // needs no room made for it and must not be re-docked into the tiled flow.
+        guard !layout[id].isFloating else { commit(); return }
+        layout[id].isPinned = false
         let others = layout.slots.filter {
             $0.id != id && $0.section != nil && !$0.isFloating && $0.isPinned
         }

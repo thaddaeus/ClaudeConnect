@@ -10,25 +10,14 @@ struct SectionHeaderView: View {
     /// Set while this header is the drag source, so the workspace can raise its
     /// slot drop targets. Unused while floating.
     @Binding var draggingSection: SectionKind?
-    /// Supplied only for a floating section: dragging its header repositions the
-    /// overlay instead of reassigning its slot.
-    var onFloatingMove: ((CGSize) -> Void)?
-    var onFloatingMoveEnded: (() -> Void)?
-
     var body: some View {
-        Group {
-            if slot.isFloating, let onFloatingMove {
-                bar.gesture(
-                    DragGesture(minimumDistance: 1)
-                        .onChanged { onFloatingMove($0.translation) }
-                        .onEnded { _ in onFloatingMoveEnded?() }
-                )
-            } else {
-                bar.onDrag {
-                    draggingSection = kind
-                    return NSItemProvider(object: kind.rawValue as NSString)
-                }
-            }
+        // One drag behaviour in every state. A floating panel is docked to its slot's
+        // edge, so dragging its header into another slot RE-ANCHORS it — which is the
+        // only positioning a docked overlay has.
+        bar
+        .onDrag {
+            draggingSection = kind
+            return NSItemProvider(object: kind.rawValue as NSString)
         }
         .contextMenu {
             SectionLayoutMenu(kind: kind, layout: layout)
@@ -122,7 +111,7 @@ struct SectionHeaderView: View {
     /// The header shows only a glyph, so the tooltip carries the section's name.
     private var helpText: String {
         let drag = slot.isFloating
-            ? "Drag to move the floating \(kind.title)"
+            ? "Drag to re-anchor the floating \(kind.title) to another edge"
             : "Drag to move \(kind.title) into another slot"
         guard let detail = kind.detail else { return "\(kind.title)\n\(drag)" }
         return "\(kind.title) — \(detail)\n\(drag)"
@@ -191,7 +180,7 @@ struct SectionLayoutMenu: View {
             }
 
             if kind.canFloat {
-                Button(slot.isFloating ? "Dock" : "Float over console") {
+                Button(slot.isFloating ? "Dock into the layout" : "Float over the layout") {
                     layout.setFloating(slot.id, !slot.isFloating)
                 }
             }

@@ -133,16 +133,25 @@ Every slot decides independently — pinning is combinatorial, not one global po
 | Property | Values |
 | -------- | ------ |
 | size | PINNED (an explicit fraction **of the window**) or FLEXIBLE (absorbs leftover) |
-| display | TILED (consumes layout space) or FLOATING (overlays, consumes none) |
+| display | TILED (consumes layout space) or FLOATING (docked overlay, consumes none) |
+
+**Floating is a docked overlay, not a free window.** The panel keeps the edge its slot
+came from (`SlotID.floatsToTrailingEdge`), spans the full height, and takes
+`pinnedFraction` as its width. It consumes no layout space in *any* state, collapsed
+included — so the tiles underneath resolve as if it were not there, and resizing,
+collapsing or maximising the overlay afterwards cannot move them. Dragging its header
+into another slot re-anchors it to that edge; dragging its inner edge resizes it.
+Full Width on a floating panel just covers the window and leaves the tiles alone.
 
 Size arithmetic lives in `WorkspaceLayout.resolve(in:)` and is the whole point of the
 feature — *the console must not resize when a browser closes*:
 
 - A pinned fraction is of the WINDOW, so it survives a sibling closing.
 - Leftover after pins splits evenly among flexible slots.
-- With **no** flexible slot the leftover stays EMPTY. Nothing stretches into it.
-  That empty space is placed back at the slots that gave it up (a floating slot leaves
-  its former width as a gap), so pinned tiles do not move when a neighbour floats.
+- With **no** flexible slot the leftover stays EMPTY, at the trailing edge. Nothing
+  stretches into it.
+- A FLOATING slot contributes nothing to this arithmetic — the tiled layout resolves
+  exactly as if that section did not exist.
 - Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.
 - A slot that cannot reach its section's minimum width **collapses to a 22pt rail**
   rather than rendering a useless sliver. The console's minimum is a standard
