@@ -134,6 +134,9 @@ struct ConsoleForgeApp: App {
     /// `TerminalContainerView`) because the voice channel needs to reach a tab's PTY,
     /// and because a session manager should outlive any one view's lifetime.
     @State private var terminalManager = TerminalSessionManager()
+    /// The window's slot layout (which section sits where, and how each slot sizes
+    /// itself). Held at app scope so the menu-bar Layout menu can drive it too.
+    @State private var layoutStore = LayoutStore()
     @State private var voice = VoiceController()
     @State private var commandWatcher = CommandWatcher()
     @State private var companionSettings: CompanionSettings
@@ -170,6 +173,7 @@ struct ConsoleForgeApp: App {
                 .environment(store)
                 .environment(activityTracker)
                 .environment(terminalManager)
+                .environment(layoutStore)
                 .environment(voice)
                 .environment(companionAuth)
                 .environment(supportReporter)
@@ -302,6 +306,8 @@ struct ConsoleForgeApp: App {
                     .disabled(index >= store.openTabIDs.count)
                 }
             }
+
+            LayoutCommands(layout: layoutStore)
 
             SupportCommands()
         }

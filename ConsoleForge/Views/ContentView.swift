@@ -11,7 +11,10 @@ struct ContentView: View {
             NavigationSplitView {
                 SidebarView()
             } detail: {
-                TerminalContainerView()
+                // The detail area is the workspace: a slot container that hosts the
+                // console (tab bar + terminals) and the browser. Layout is per-window,
+                // so switching console tabs never rearranges it.
+                WorkspaceView()
             }
         }
         .frame(minWidth: 900, minHeight: 600)

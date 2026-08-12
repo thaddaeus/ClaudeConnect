@@ -24,11 +24,10 @@ final class TerminalSessionManager {
     /// placeholder size on first mount (which corrupts the SwiftTerm buffer model).
     private(set) var currentSize = CGSize(width: 800, height: 600)
 
-    /// True once the first real size has been applied. The bootstrap size must land
-    /// synchronously — `handleSizeChange` reconciles right after `setSize` returns
-    /// and sessions must be born at the real size (task 9528) — so only sizes after
-    /// the first are debounced.
-    private var hasAppliedRealSize = false
+    /// True once a real size has been applied. Sessions are created off the back of
+    /// this (see `TerminalContainerView.reconcile`), so it deliberately flips on the
+    /// SETTLED size, not the first one seen.
+    private(set) var hasAppliedRealSize = false
     /// Latest size seen during an in-flight resize burst; applied when the trailing
     /// debounce fires.
     private var pendingSize: CGSize?
@@ -62,12 +61,34 @@ final class TerminalSessionManager {
     /// transition, live window drag) produces exactly one SwiftTerm reflow + PTY
     /// winsize at the final size.
     func setSize(_ size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
-        guard hasAppliedRealSize else {
-            hasAppliedRealSize = true
-            applySize(size)
+        // A degenerate geometry is REJECTED outright, not clamped and not applied. The
+        // old `> 1` test let a ~27pt container through as a two-column grid, and a
+        // resumed session flooding its history in at two columns re-breaks every
+        // wrapped line permanently — widening again cannot undo it. Anything this
+        // small is a container mid-collapse or mid-transition, so the last good size
+        // is the correct thing to keep.
+        guard TerminalMetrics.isUsable(size) else {
+            GeometryTrace.shared.record("rejected",
+                "container=\(Int(size.width))×\(Int(size.height)) " +
+                "(\(TerminalMetrics.columns(forWidth: size.width)) cols) — keeping " +
+                "\(Int(currentSize.width))×\(Int(currentSize.height))")
+            if CFDebug.geometry {
+                print("[geom] REJECTED degenerate container=\(Int(size.width))×\(Int(size.height))")
+            }
             return
         }
+        GeometryTrace.shared.noteContainer(size)
+        GeometryTrace.shared.record("setSize",
+            "container=\(Int(size.width))×\(Int(size.height)) " +
+            "(\(TerminalMetrics.columns(forWidth: size.width)) cols) → debounce")
+        // EVERY size is debounced, the first one included. It used to land
+        // synchronously so sessions were born at a real size rather than the 800×600
+        // placeholder (task 9528) — but the trace showed the window has not settled by
+        // then: launch emitted 544×740, then 781×874, so a session was born at 75
+        // columns and immediately reflowed to 109. Harmless for an empty buffer,
+        // corrupting for a resumed one flooding its history in between. Waiting one
+        // debounce is strictly better: still never the placeholder, and now never a
+        // transient either.
         pendingSize = size
         coalescedCount += 1
         resizeDebounce?.cancel()
@@ -84,6 +105,9 @@ final class TerminalSessionManager {
     }
 
     private func applySize(_ size: CGSize) {
+        hasAppliedRealSize = true
+        GeometryTrace.shared.record("applied",
+            "container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count) coalesced=\(coalescedCount)")
         currentSize = size
         if CFDebug.geometry {
             print("[geom] setSize container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count) coalesced=\(coalescedCount)")
@@ -125,13 +149,14 @@ final class TerminalSessionManager {
     /// stale-width live region that a plain repaint can't fix. `size` is the
     /// container's real bounds, read at call time (not the possibly-stale cached size).
     func resync(to size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
+        guard TerminalMetrics.isUsable(size) else { return }
         resizeDebounce?.cancel()
         resizeDebounce = nil
         pendingSize = nil
         if CFDebug.geometry {
             print("[geom] resync container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count)")
         }
+        GeometryTrace.shared.record("resync", "container=\(Int(size.width))×\(Int(size.height))")
         currentSize = size
         for session in sessions.values {
             session.resize(to: size)   // re-assert frame → SwiftTerm reflow → PTY winsize (no-op if unchanged)
@@ -325,7 +350,16 @@ struct TerminalHostView: NSViewRepresentable {
         // setSize path — which is the single source of frame changes for mounted
         // and detached terminals alike (task 9543).
         if let session, let target {
-            target.frame = container.bounds
+            // The LAST unguarded frame write in the app, and the one that bit: mounting
+            // into a container that is collapsed, zero-width or mid-transition would set
+            // the terminal's frame directly here, reflowing the buffer to a couple of
+            // columns and bypassing setSize's floor entirely. Adopt the container's
+            // geometry only when it is a usable terminal size; otherwise leave the view
+            // at the good size it already has and let the next real frameDidChange
+            // correct it through the coalesced path.
+            if TerminalMetrics.isUsable(container.bounds.size) {
+                target.frame = container.bounds
+            }
             target.autoresizingMask = []
             container.addSubview(target)
             context.coordinator.mountedSession = session

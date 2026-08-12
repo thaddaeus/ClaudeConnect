@@ -8,10 +8,6 @@ struct TerminalContainerView: View {
     @Environment(TerminalSessionManager.self) private var manager
     @Environment(VoiceController.self) private var voice
     @State private var tabStates: [UUID: SessionState] = [:]
-    /// Gates session creation until the real terminal-area size is known, so sessions
-    /// are never born at the placeholder size (whose reflow-on-mount corrupts the
-    /// SwiftTerm buffer — especially for restored/--resume tabs).
-    @State private var hasRealSize = false
 
     var body: some View {
         // Reference activeTabID in body so the view recomputes (and the host
@@ -69,6 +65,9 @@ struct TerminalContainerView: View {
                 }
             }
             .onAppear { reconcile() }
+            // Sessions are created once the terminal area's size has SETTLED, not when
+            // the first one arrives — see TerminalSessionManager.setSize.
+            .onChange(of: manager.hasAppliedRealSize) { _, _ in reconcile() }
             .onChange(of: store.openTabIDs) { _, _ in reconcile() }
             .onChange(of: store.activeTabID) { _, newID in
                 if let tabID = newID {
@@ -117,21 +116,22 @@ struct TerminalContainerView: View {
     /// per-tab callbacks (output/bell/exit tracking + terminated overlay state +
     /// close event emission) exactly as the old per-tab `SwiftTermView` did.
     /// Feed the live terminal-area size to the manager (resizing all live sessions in
-    /// lockstep). The first real size flips `hasRealSize` and kicks the initial
-    /// reconcile, so sessions are created already sized to the real area.
+    /// lockstep). The manager debounces and flips `hasAppliedRealSize` on the SETTLED
+    /// size, which is what kicks the initial reconcile — so sessions are created already
+    /// sized to the area they will actually occupy.
     private func handleSizeChange(_ size: CGSize) {
-        guard size.width > 1, size.height > 1 else { return }
+        // Same floor the manager applies, checked here too: a degenerate geometry must
+        // not reach the resize path at all, or sessions would be BORN two columns wide
+        // and a resumed history would flood in at that width.
+        guard TerminalMetrics.isUsable(size) else { return }
         manager.setSize(size)
-        if !hasRealSize {
-            hasRealSize = true
-            reconcile()
-        }
     }
 
     private func reconcile() {
-        // Wait for a real size — otherwise sessions would be born at the placeholder
-        // size and reflow-corrupt on first mount. handleSizeChange re-invokes us.
-        guard hasRealSize else { return }
+        // Wait for a SETTLED size — otherwise sessions are born at the placeholder, or
+        // at a transient mid-launch geometry, and reflow-corrupt. The manager's
+        // hasAppliedRealSize re-invokes us when it lands.
+        guard manager.hasAppliedRealSize else { return }
         manager.reconcile(
             openIDs: store.openTabIDs,
             resolveLaunch: { id in store.resolveLaunch(for: id) },
