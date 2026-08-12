@@ -21,23 +21,29 @@ enum TerminalMetrics {
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
 
-    /// Advance width of one cell. Measured rather than hardcoded so changing
-    /// `fontSize` moves the minimum with it. Menlo 11pt ≈ 6.62pt.
+    /// Width of one cell, ROUNDED UP to a whole point.
+    ///
+    /// The rounding is not cosmetic: SwiftTerm lays its grid out on integral cells, so
+    /// Menlo 11pt's 6.6226pt advance becomes a 7pt cell. Using the raw advance made the
+    /// column arithmetic optimistic by ~5%, and the geometry trace proved it — a
+    /// container the layout engine had sized for "80 columns" reported a 75-column grid.
+    /// Every floor derived from this was therefore short of what it promised.
     static let cellWidth: CGFloat = {
         let font = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        return ("W" as NSString).size(withAttributes: [.font: font]).width
+        return ("W" as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
     }()
 
     static let cellHeight: CGFloat = {
         let font = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        return font.ascender - font.descender + font.leading
+        return (font.ascender - font.descender + font.leading).rounded(.up)
     }()
 
-    /// Slack for SwiftTerm's own insets and scroller so 80 columns genuinely fit
-    /// rather than landing one cell short.
-    static let chrome: CGFloat = 14
+    /// Slack for SwiftTerm's own insets so the promised columns genuinely fit rather
+    /// than landing a cell short. Calibrated against real grids the trace recorded
+    /// (544px → 75 cols, 781px → 109 cols at a 7pt cell).
+    static let chrome: CGFloat = 16
 
     /// Columns a terminal area of `width` points renders. Used for the live
     /// `cols × rows` readout while a slot splitter is being dragged — the only

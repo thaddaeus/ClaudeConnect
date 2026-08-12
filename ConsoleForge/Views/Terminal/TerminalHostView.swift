@@ -24,11 +24,10 @@ final class TerminalSessionManager {
     /// placeholder size on first mount (which corrupts the SwiftTerm buffer model).
     private(set) var currentSize = CGSize(width: 800, height: 600)
 
-    /// True once the first real size has been applied. The bootstrap size must land
-    /// synchronously — `handleSizeChange` reconciles right after `setSize` returns
-    /// and sessions must be born at the real size (task 9528) — so only sizes after
-    /// the first are debounced.
-    private var hasAppliedRealSize = false
+    /// True once a real size has been applied. Sessions are created off the back of
+    /// this (see `TerminalContainerView.reconcile`), so it deliberately flips on the
+    /// SETTLED size, not the first one seen.
+    private(set) var hasAppliedRealSize = false
     /// Latest size seen during an in-flight resize burst; applied when the trailing
     /// debounce fires.
     private var pendingSize: CGSize?
@@ -81,13 +80,15 @@ final class TerminalSessionManager {
         GeometryTrace.shared.noteContainer(size)
         GeometryTrace.shared.record("setSize",
             "container=\(Int(size.width))×\(Int(size.height)) " +
-            "(\(TerminalMetrics.columns(forWidth: size.width)) cols) " +
-            (hasAppliedRealSize ? "→ debounce" : "→ apply (first)"))
-        guard hasAppliedRealSize else {
-            hasAppliedRealSize = true
-            applySize(size)
-            return
-        }
+            "(\(TerminalMetrics.columns(forWidth: size.width)) cols) → debounce")
+        // EVERY size is debounced, the first one included. It used to land
+        // synchronously so sessions were born at a real size rather than the 800×600
+        // placeholder (task 9528) — but the trace showed the window has not settled by
+        // then: launch emitted 544×740, then 781×874, so a session was born at 75
+        // columns and immediately reflowed to 109. Harmless for an empty buffer,
+        // corrupting for a resumed one flooding its history in between. Waiting one
+        // debounce is strictly better: still never the placeholder, and now never a
+        // transient either.
         pendingSize = size
         coalescedCount += 1
         resizeDebounce?.cancel()
@@ -104,6 +105,7 @@ final class TerminalSessionManager {
     }
 
     private func applySize(_ size: CGSize) {
+        hasAppliedRealSize = true
         GeometryTrace.shared.record("applied",
             "container=\(Int(size.width))×\(Int(size.height)) sessions=\(sessions.count) coalesced=\(coalescedCount)")
         currentSize = size
