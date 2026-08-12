@@ -148,8 +148,14 @@ feature — *the console must not resize when a browser closes*:
 
 - A pinned fraction is of the WINDOW, so it survives a sibling closing.
 - Leftover after pins splits evenly among flexible slots.
-- With **no** flexible slot the leftover stays EMPTY, at the trailing edge. Nothing
-  stretches into it.
+- An **empty slot that is PINNED reserves its fraction as a GAP** at its own position —
+  a hole held open for a panel that is not there yet. This needs no separate concept: a
+  slot keeps its pin when its section is moved out or closed, so "leave a 30% hole where
+  Safari was" is just the slot, still pinned. Dropping any section there fills it
+  exactly; a flexible neighbour cannot swallow it; right-click releases it. The header's
+  pin button pins a section at its *current* width, which is how a gap gets made.
+- Any leftover beyond the pins stays EMPTY at the trailing edge. Nothing stretches
+  into it.
 - A FLOATING slot contributes nothing to this arithmetic — the tiled layout resolves
   exactly as if that section did not exist.
 - Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.

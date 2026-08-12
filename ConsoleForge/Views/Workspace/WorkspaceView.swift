@@ -41,6 +41,8 @@ struct WorkspaceView: View {
                     browserSection(resolved, size)
                 }
 
+                reservedGaps(resolved, size)
+
                 collapsedRails(resolved, size)
 
                 splitterHandles(resolved, size)
@@ -114,6 +116,7 @@ struct WorkspaceView: View {
                     kind: kind,
                     slot: slot,
                     layout: layout,
+                    currentFraction: size.width > 0 ? Double(rect.width / size.width) : 0,
                     draggingSection: $draggingSection
                 )
             }
@@ -133,6 +136,52 @@ struct WorkspaceView: View {
         // No .animation here on purpose: an animated slot rect would emit a frame per
         // tick straight into the terminal resize path.
         .zIndex(slot.isFloating ? 10 : 0)
+    }
+
+    // MARK: - Reserved gaps
+
+    /// A pinned, empty slot: a hole the user deliberately left open. It is real layout
+    /// space owned by a slot, so it reads as a reserved position rather than a rendering
+    /// bug, and dropping a section on it fills it at exactly that width. Once there is a
+    /// document reader and a console-output panel, this is where they land.
+    @ViewBuilder
+    private func reservedGaps(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        ForEach(SlotID.allCases) { id in
+            if let rect = resolved.gaps[id] {
+                let percent = Int((layout[id].pinnedFraction * 100).rounded())
+                VStack(spacing: 3) {
+                    Image(systemName: "rectangle.dashed")
+                        .font(.system(size: 14))
+                    Text("\(id.title) · \(percent)%")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("reserved")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.secondary)
+                .frame(width: rect.width, height: rect.height)
+                .background(Color(nsColor: .underPageBackgroundColor))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color(nsColor: .separatorColor),
+                                      style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                        .padding(4)
+                }
+                .contentShape(Rectangle())
+                .help("\(id.title) is held open at \(percent)% for a panel to drop into. Right-click to release it.")
+                .contextMenu { SlotGapMenu(id: id, layout: layout) }
+                .onDrop(of: [.text],
+                        isTargeted: Binding(get: { hoveredDropSlot == id },
+                                            set: { hoveredDropSlot = $0 ? id : nil })) { _ in
+                    guard let dragged = draggingSection else { return false }
+                    layout.move(dragged, to: id)
+                    endDrag()
+                    return true
+                }
+                .offset(x: rect.minX, y: rect.minY)
+                .zIndex(1)
+            }
+        }
     }
 
     // MARK: - Collapsed rails

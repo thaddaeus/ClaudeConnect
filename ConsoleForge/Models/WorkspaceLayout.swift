@@ -230,6 +230,9 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
 
         let occupied = slots.filter { $0.section != nil }
         let allTiled = occupied.filter { !$0.isFloating }.sorted { $0.id.order < $1.id.order }
+        // Empty + pinned = a reserved gap. Never collapses, never floored: a hole is
+        // allowed to be any size the user set it to.
+        let gaps = slots.filter { $0.section == nil && $0.isPinned }
 
         func floorWidth(_ slot: SlotConfiguration) -> CGFloat {
             slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
@@ -269,7 +272,7 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         var widths: [SlotID: CGFloat] = [:]
         while true {
             let active = allTiled.filter { !collapsed.contains($0.id) }
-            widths = tileWidths(active: active, railCount: collapsed.count, size: size)
+            widths = tileWidths(active: active, gaps: gaps, railCount: collapsed.count, size: size)
             guard active.count > 1,
                   let starved = active.first(where: { (widths[$0.id] ?? 0) + 0.5 < floorWidth($0) })
             else { break }
@@ -285,8 +288,9 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // are untouched, so a lone 50% pin still leaves 50% empty (rule 3).
         let survivors = allTiled.filter { !collapsed.contains($0.id) }
         if survivors.count == 1, let only = survivors.first {
-            let available = size.width - CGFloat(collapsed.count) * WorkspaceLayout.collapsedRailWidth
-            widths[only.id] = min(max(widths[only.id] ?? 0, floorWidth(only)), max(0, available))
+            let reserved = CGFloat(collapsed.count) * WorkspaceLayout.collapsedRailWidth
+                + gaps.reduce(0) { $0 + (widths[$1.id] ?? 0) }
+            widths[only.id] = min(max(widths[only.id] ?? 0, floorWidth(only)), max(0, size.width - reserved))
         }
 
         var x: CGFloat = 0
@@ -301,6 +305,14 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
                 continue
             }
             guard let width = widths[id] else { continue }
+            if self[id].section == nil {
+                // A reserved gap: real layout space, owned by a slot, holding a
+                // position open. Not a section, so no splitter runs across it.
+                result.gaps[id] = CGRect(x: x, y: 0, width: width, height: size.height)
+                x += width
+                previousTiled = nil
+                continue
+            }
             result.tiled[id] = CGRect(x: x, y: 0, width: width, height: size.height)
             if let previousTiled {
                 result.splitters.append(SplitterPosition(leading: previousTiled, trailing: id, x: x))
@@ -317,15 +329,18 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     /// past its share to meet a floor, because that would silently overflow the window.
     /// Falling short of the floor is what the collapse pass acts on instead.
     private func tileWidths(active: [SlotConfiguration],
+                            gaps: [SlotConfiguration],
                             railCount: Int,
                             size: CGSize) -> [SlotID: CGFloat] {
-        guard !active.isEmpty else { return [:] }
+        guard !active.isEmpty || !gaps.isEmpty else { return [:] }
         // Rails come off the top; the rest of the window is what fractions divide.
         let usable = max(0, Double(size.width) - Double(railCount) * Double(WorkspaceLayout.collapsedRailWidth))
         let budget = usable / Double(size.width)
 
         let flexible = active.filter { !$0.isPinned }
-        var pinnedSum = active.filter(\.isPinned).reduce(0.0) { $0 + $1.pinnedFraction }
+        // Reserved gaps claim window space exactly like a pinned section does — that is
+        // what stops a flexible neighbour swallowing the hole.
+        var pinnedSum = (active.filter(\.isPinned) + gaps).reduce(0.0) { $0 + $1.pinnedFraction }
 
         // Reserve a share for the flexible slots, then fit the pins into what is left.
         // With no flexible slot `reserved` is 0 and this degenerates to the plain
@@ -343,7 +358,7 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         let flexEach = flexible.isEmpty ? 0 : leftover / Double(flexible.count)
 
         var widths: [SlotID: CGFloat] = [:]
-        for slot in active {
+        for slot in active + gaps {
             let fraction = slot.isPinned ? slot.pinnedFraction * pinScale : flexEach
             widths[slot.id] = CGFloat(fraction) * size.width
         }
@@ -365,6 +380,9 @@ struct ResolvedWorkspaceLayout: Equatable {
     var tiled: [SlotID: CGRect] = [:]
     /// Frames for occupied, floating slots (overlaid; consume no layout space).
     var floating: [SlotID: CGRect] = [:]
+    /// Reserved empty space owned by a pinned, sectionless slot — a hole held open for
+    /// a panel that is not there yet, and a drop target that fills it exactly.
+    var gaps: [SlotID: CGRect] = [:]
     /// Rails for slots too narrow to render their section. The section stays alive and
     /// unresized behind the rail; clicking it restores the slot.
     var collapsed: [SlotID: CGRect] = [:]

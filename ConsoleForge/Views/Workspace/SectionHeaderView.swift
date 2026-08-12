@@ -7,6 +7,9 @@ struct SectionHeaderView: View {
     let kind: SectionKind
     let slot: SlotConfiguration
     let layout: LayoutStore
+    /// The section's live width as a fraction of the window, so the pin button can pin
+    /// it exactly where it already is rather than snapping to a preset.
+    let currentFraction: Double
     /// Set while this header is the drag source, so the workspace can raise its
     /// slot drop targets. Unused while floating.
     @Binding var draggingSection: SectionKind?
@@ -32,6 +35,8 @@ struct SectionHeaderView: View {
             Image(systemName: kind.symbol)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+
+            pinToggle
 
             sizeBadge
 
@@ -68,6 +73,30 @@ struct SectionHeaderView: View {
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(Rectangle())
         .help(helpText)
+    }
+
+    /// Pin the section AT ITS CURRENT WIDTH, or release it back to flexible. This is
+    /// the control that makes a hole: a pinned section keeps its exact fraction of the
+    /// window, and the slot keeps that pin when the section is moved out or closed —
+    /// so the space it held stays reserved for whatever drops in next.
+    private var pinToggle: some View {
+        Button {
+            if slot.isPinned {
+                layout.makeFlexible(slot.id)
+            } else {
+                layout.pin(slot.id, fraction: currentFraction)
+            }
+        } label: {
+            Image(systemName: slot.isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 10))
+                .frame(width: 18, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(slot.isPinned ? Color.accentColor : Color.secondary)
+        .help(slot.isPinned
+              ? "Pinned at \(Int((slot.pinnedFraction * 100).rounded()))% of the window — click to make it flexible again"
+              : "Pin \(kind.title) at its current width. The slot keeps the pin when the section leaves, holding the space open.")
     }
 
     /// Collapse / Normal / Maximize, with the live state lit. Three explicit states
@@ -195,6 +224,33 @@ struct SectionLayoutMenu: View {
     }
 }
 
+/// Controls for a reserved gap — a pinned slot holding space open with nothing in it.
+struct SlotGapMenu: View {
+    let id: SlotID
+    let layout: LayoutStore
+
+    var body: some View {
+        Text("\(id.title) — reserved at \(Int((layout[id].pinnedFraction * 100).rounded()))%")
+        Divider()
+        ForEach([0.25, 1.0 / 3.0, 0.5], id: \.self) { fraction in
+            Button("Hold \(Int((fraction * 100).rounded()))%") { layout.pin(id, fraction: fraction) }
+        }
+        Divider()
+        Button("Release this gap") { layout.makeFlexible(id) }
+        Divider()
+        ForEach(SectionKind.allCases) { kind in
+            if !layout.isOpen(kind) {
+                Button("Open \(kind.title) here") {
+                    layout.open(kind)
+                    layout.move(kind, to: id)
+                }
+            } else if layout.slot(holding: kind)?.id != id {
+                Button("Move \(kind.title) here") { layout.move(kind, to: id) }
+            }
+        }
+    }
+}
+
 /// Menu-bar entry point, so the layout is reachable even when the console is the
 /// only open section (in which case no headers are drawn).
 struct LayoutCommands: Commands {
@@ -212,6 +268,16 @@ struct LayoutCommands: Commands {
             ForEach(SectionKind.allCases) { kind in
                 Menu(kind.title) {
                     SectionLayoutMenu(kind: kind, layout: layout)
+                }
+            }
+
+            Divider()
+
+            Menu("Reserve a Gap") {
+                ForEach(SlotID.allCases) { id in
+                    if layout[id].section == nil {
+                        Menu(id.title) { SlotGapMenu(id: id, layout: layout) }
+                    }
                 }
             }
 
