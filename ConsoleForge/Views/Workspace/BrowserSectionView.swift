@@ -22,9 +22,26 @@ final class BrowserModel {
     init(initialURL: String?) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        // Developer extras must be on the configuration BEFORE the web view is built
+        // from it — see the note below on the two inspector switches.
+        if WKPreferences.instancesRespond(to: NSSelectorFromString("_setDeveloperExtrasEnabled:")) {
+            configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        }
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-        // Web Inspector on the embedded view (macOS 13.3+). Without it the section is
-        // a viewer; with it, it is a usable dev surface — right-click → Inspect Element.
+        // Web Inspector takes TWO different switches, and only together do they give a
+        // usable dev surface rather than a viewer.
+        //
+        // `isInspectable` (macOS 13.3+) is the SUPPORTED opt-in, but all it does is
+        // expose the view to Safari ▸ Develop ▸ <this Mac> ▸ ConsoleForge. It
+        // deliberately adds no "Inspect Element" to the web view's own context menu —
+        // see webkit.org/blog/13936.
+        //
+        // The context-menu item comes from WebKit's private developer-extras
+        // preference. ConsoleForge ships via Developer ID, not the App Store, so a
+        // private preference is a reasonable trade for right-click-to-inspect. Guarded
+        // on the setter actually existing: an unknown KVC key raises an Objective-C
+        // exception that Swift cannot catch, so an unguarded `setValue` would turn a
+        // future WebKit removal into a hard crash instead of a missing menu item.
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = true
 

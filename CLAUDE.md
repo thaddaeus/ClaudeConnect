@@ -135,6 +135,17 @@ Every slot decides independently — pinning is combinatorial, not one global po
 | size | PINNED (an explicit fraction **of the window**) or FLEXIBLE (absorbs leftover) |
 | display | TILED (consumes layout space) or FLOATING (docked overlay, consumes none) |
 
+**Web Inspector takes two switches.** `WKWebView.isInspectable` (macOS 13.3+) is the
+supported opt-in but ONLY exposes the view to *Safari ▸ Develop ▸ this Mac ▸
+ConsoleForge* — it deliberately adds no "Inspect Element" to the web view's own context
+menu ([webkit.org/blog/13936](https://webkit.org/blog/13936/enabling-the-inspection-of-web-content-in-apps/)).
+That item comes from WebKit's private developer-extras preference, set by KVC on the
+configuration *before* the web view is built, and guarded on the setter existing —
+an unknown KVC key raises an Obj-C exception Swift cannot catch, so an unguarded
+`setValue` would make a future WebKit removal a crash instead of a missing menu item.
+Acceptable here because ConsoleForge ships via Developer ID, not the App Store. The
+inspector opens as its own WebKit window; there is no public API to host it in a slot.
+
 **Floating is a docked overlay, not a free window.** The panel keeps the edge its slot
 came from (`SlotID.floatsToTrailingEdge`), spans the full height, and takes
 `pinnedFraction` as its width. It consumes no layout space in *any* state, collapsed
