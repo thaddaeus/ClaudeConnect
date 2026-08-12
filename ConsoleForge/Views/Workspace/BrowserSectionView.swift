@@ -20,21 +20,25 @@ final class BrowserModel {
 
     @ObservationIgnored private var observers: [NSKeyValueObservation] = []
 
-    init(initialURL: String?) {
+    init(initialURL: String?, log: WebConsoleLog) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+
+        // Instrument the page so its console and network activity land in the Web
+        // Output panel — and in a file a session can read. This, not the Web Inspector,
+        // is how the console sees what the in-app browser is doing: WebKit's inspector
+        // cannot be hosted in a slot and its output is unreachable from here.
+        configuration.userContentController.addUserScript(WebConsoleScript.userScript())
+        configuration.userContentController.add(WebConsoleBridge(log: log),
+                                                name: WebConsoleScript.messageHandlerName)
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-        // Web Inspector, the SUPPORTED way (macOS 13.3+): this exposes the view to
-        // Safari ▸ Develop ▸ <this Mac> ▸ ConsoleForge. It deliberately adds no
-        // "Inspect Element" to the web view's own context menu — see
-        // webkit.org/blog/13936.
-        //
-        // WebKit's private developer-extras preference DOES add that menu item, and it
-        // was tried here. Don't: clicking it makes WebKit dock an inspector inside the
-        // web view, which a third-party host cannot actually render — the page is
-        // squashed into the top of the panel and the rest goes dead. A menu item that
-        // breaks the panel is worse than no menu item. Safari's Develop menu is the
-        // route that works, and "Open in Safari" below is the one-click way there.
+        // Kept because acceptance criterion 7 asks for it, and it costs nothing: it
+        // exposes the view to Safari ▸ Develop for the rare deep dive. It is NOT the
+        // primary path — the Web Output panel is, because that is the one the console
+        // can actually see. Do not try WebKit's private developer-extras preference to
+        // get a right-click "Inspect Element": clicking it makes WebKit dock an
+        // inspector INSIDE the web view, which a third-party host cannot render, and
+        // the panel goes half-dead.
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = true
 
@@ -140,13 +144,13 @@ struct BrowserSectionView: View {
                 .font(.system(size: 11))
                 .onSubmit { model.submitAddress() }
 
-            // The inspector can only be driven from Safari (see BrowserModel.init), so
-            // hand the page over in one click rather than making it a copy-paste.
+            // Escape hatch for the rare case the Web Output panel is not enough and you
+            // want the full Web Inspector. Not the primary path.
             Button(action: model.openInSafari) {
                 Image(systemName: "safari")
             }
             .disabled(model.currentURL == nil)
-            .help("Open this page in Safari — then Develop ▸ Show Web Inspector")
+            .help("Open this page in Safari for the full Web Inspector")
         }
         .buttonStyle(.borderless)
         .font(.system(size: 11))

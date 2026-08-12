@@ -10,6 +10,7 @@ import CoreGraphics
 enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case console
     case browser
+    case webConsole
 
     var id: String { rawValue }
 
@@ -17,6 +18,7 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .console: "Console"
         case .browser: "Safari"
+        case .webConsole: "Web Output"
         }
     }
 
@@ -24,7 +26,8 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     var detail: String? {
         switch self {
         case .console: nil
-        case .browser: "In-app WebKit (WKWebView) — the engine Safari uses. Web Inspector enabled."
+        case .browser: "In-app WebKit (WKWebView) — the engine Safari uses."
+        case .webConsole: "console.* calls, errors and fetch/XHR requests captured from the Safari panel."
         }
     }
 
@@ -32,6 +35,7 @@ enum SectionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .console: "terminal"
         case .browser: "safari"
+        case .webConsole: "list.bullet.rectangle"
         }
     }
 

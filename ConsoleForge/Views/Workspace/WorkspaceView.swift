@@ -18,6 +18,9 @@ struct WorkspaceView: View {
     @Environment(LayoutStore.self) private var layout
 
     @State private var browser: BrowserModel?
+    /// Lives at workspace scope, not inside the browser: the log outlives any one page
+    /// and is read by a different section.
+    @State private var webLog = WebConsoleLog()
     @State private var draggingSection: SectionKind?
     @State private var hoveredDropSlot: SlotID?
     @State private var splitterDrag: SplitterDrag?
@@ -43,6 +46,10 @@ struct WorkspaceView: View {
 
                 if layout.isOpen(.browser) {
                     browserSection(resolved, size)
+                }
+
+                if layout.isOpen(.webConsole) {
+                    webConsoleSection(resolved, size)
                 }
 
                 reservedGaps(resolved, size)
@@ -83,7 +90,7 @@ struct WorkspaceView: View {
     /// standard 80-column terminal at the live font; below that it collapses to a rail
     /// instead of rendering a terminal too narrow to be read.
     private static var minWidths: [SectionKind: CGFloat] {
-        [.console: TerminalMetrics.minimumWidth, .browser: 320]
+        [.console: TerminalMetrics.minimumWidth, .browser: 320, .webConsole: 300]
     }
 
 
@@ -105,6 +112,16 @@ struct WorkspaceView: View {
            let browser {
             sectionFrame(kind: .browser, slot: slot, rect: rect, size: size) {
                 BrowserSectionView(model: browser)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func webConsoleSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        if let slot = layout.slot(holding: .webConsole),
+           let rect = resolved.renderFrame(for: slot.id, height: size.height) {
+            sectionFrame(kind: .webConsole, slot: slot, rect: rect, size: size) {
+                WebConsoleSectionView(log: webLog)
             }
         }
     }
@@ -549,7 +566,7 @@ struct WorkspaceView: View {
     /// releases it; reopening starts it back at the last page.
     private func syncBrowserModel() {
         if layout.isOpen(.browser) {
-            if browser == nil { browser = BrowserModel(initialURL: layout.browserURL) }
+            if browser == nil { browser = BrowserModel(initialURL: layout.browserURL, log: webLog) }
         } else {
             browser = nil
         }

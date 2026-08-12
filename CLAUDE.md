@@ -135,16 +135,24 @@ Every slot decides independently — pinning is combinatorial, not one global po
 | size | PINNED (an explicit fraction **of the window**) or FLEXIBLE (absorbs leftover) |
 | display | TILED (consumes layout space) or FLOATING (docked overlay, consumes none) |
 
-**Web Inspector is Safari-only.** `WKWebView.isInspectable` (macOS 13.3+) is the
-supported opt-in but ONLY exposes the view to *Safari ▸ Develop ▸ this Mac ▸
-ConsoleForge* — it deliberately adds no "Inspect Element" to the web view's own context
-menu ([webkit.org/blog/13936](https://webkit.org/blog/13936/enabling-the-inspection-of-web-content-in-apps/)).
-WebKit's private developer-extras preference DOES add that item — **don't**. It was
-tried: clicking it makes WebKit dock an inspector *inside* the web view, which a
-third-party host cannot render, so the page is squashed into the top of the panel and
-the rest goes dead. Safari's Develop menu is the only route that works; the panel's
-"Open in Safari" button is the one-click way there. The inspector opens as its own
-WebKit window, so it can never be hosted in a slot.
+**The browser's console and network output is captured IN-APP.** The point of an
+in-tool browser is that the session can see what the page is doing, and Web Inspector
+cannot deliver that: WebKit owns its inspector window, there is no public API to host it
+in a slot, and driving it from Safari puts the output somewhere neither the app nor the
+agent can reach. (Do not try WebKit's private developer-extras preference for a
+right-click "Inspect Element" — it docks an inspector *inside* the web view, which a
+third-party host cannot render, and the panel goes half-dead.)
+
+Instead `WebConsoleScript` is injected at document start and patches `console.*`,
+`window.onerror`, `unhandledrejection`, `fetch` and `XMLHttpRequest`, posting to
+`WebConsoleBridge` → `WebConsoleLog`. That surfaces two ways: the **Web Output** section
+(⌘⇧J), a slot panel like any other; and `…/ConsoleForge[ Beta]/web-console/session.jsonl`,
+which a session can `tail` — the panel's terminal button copies that path. What this does
+NOT reach: subresource loads the browser issues itself (images, CSS, fonts, scripts,
+beacons) and anything before the script runs. Full request capture needs a real debugging
+protocol, which is Phase C's managed Chrome with `--remote-debugging-port`.
+`isInspectable` stays set (criterion 7) as an escape hatch, with an "Open in Safari"
+button beside it.
 
 **Floating is a docked overlay, not a free window.** The panel keeps the edge its slot
 came from (`SlotID.floatsToTrailingEdge`), spans the full height, and takes

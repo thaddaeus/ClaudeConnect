@@ -193,12 +193,6 @@ struct SectionLayoutMenu: View {
 
     var body: some View {
         if let slot = layout.slot(holding: kind) {
-            if kind == .browser {
-                // The inspector is only reachable from Safari, and opens as its own
-                // WebKit window — there is no public API to host it in a slot.
-                Text("Inspector: open in Safari, then Develop ▸ Show Web Inspector")
-                Divider()
-            }
             Menu("Move to") {
                 ForEach(SlotID.allCases) { target in
                     Button {
@@ -282,10 +276,15 @@ struct LayoutCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Layout") {
-            Button(layout.isOpen(.browser) ? "Hide Browser" : "Show Browser") {
+            Button(layout.isOpen(.browser) ? "Hide Safari" : "Show Safari") {
                 layout.toggle(.browser)
             }
             .keyboardShortcut("b", modifiers: [.command, .shift])
+
+            Button(layout.isOpen(.webConsole) ? "Hide Web Output" : "Show Web Output") {
+                layout.toggle(.webConsole)
+            }
+            .keyboardShortcut("j", modifiers: [.command, .shift])
 
             Divider()
 
