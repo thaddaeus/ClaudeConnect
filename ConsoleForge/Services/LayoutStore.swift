@@ -1,6 +1,23 @@
 import Foundation
 import SwiftUI
 
+/// What a live splitter drag is doing to the sections either side of it, so the
+/// workspace can show it rather than letting a section vanish without warning.
+enum BoundaryFeedback: Equatable {
+    case free
+    /// Sitting on a section's minimum width. The drag is clamped here.
+    case atMinimum(SlotID)
+    /// Dragged far enough past the minimum that releasing will collapse it.
+    case willCollapse(SlotID)
+
+    var slot: SlotID? {
+        switch self {
+        case .free: nil
+        case .atMinimum(let id), .willCollapse(let id): id
+        }
+    }
+}
+
 /// Owns the window's slot layout and persists it.
 ///
 /// Layout is PER-WINDOW, not per-tab: switching console tabs swaps only what the
@@ -14,6 +31,18 @@ final class LayoutStore {
 
     private var loaded = false
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+
+    /// Live workspace width and the per-section width floors, published by
+    /// `WorkspaceView` (which is the layer that knows the terminal font). Held here so
+    /// every entry point — header control, context menu, menu bar — can work out a
+    /// section's minimum fraction without the caller threading geometry through.
+    @ObservationIgnored var workspaceWidth: CGFloat = 1200
+    @ObservationIgnored var sectionMinWidths: [SectionKind: CGFloat] = [:]
+
+    func minFraction(_ id: SlotID) -> Double {
+        let min = layout[id].section.flatMap { sectionMinWidths[$0] } ?? WorkspaceLayout.minSlotWidth
+        return Double(min / max(workspaceWidth, 1))
+    }
 
     private static var storageURL: URL {
         AppChannel.supportDirectory().appendingPathComponent("layout.json")
@@ -103,29 +132,120 @@ final class LayoutStore {
         commit()
     }
 
+    /// How far past a section's minimum width the pointer must travel before releasing
+    /// will collapse it. The section stops at its minimum and *stays* there for this
+    /// distance — the detent that stops a drag from snapping shut the instant it
+    /// touches the floor.
+    static let collapseOvershoot: CGFloat = 56
+
     /// Drag of the boundary between two adjacent tiled slots. The leading slot becomes
     /// pinned at the dragged fraction (that is what a splitter means); a trailing slot
     /// that is *also* pinned gives up exactly what the leading one gained, so the pair
     /// keeps its combined share and nothing beyond the boundary moves.
+    ///
+    /// Neither section is ever laid out below its minimum: the drag CLAMPS there.
+    /// Dragging further returns `.willCollapse`, and it is the caller's release that
+    /// commits the collapse — nothing disappears mid-gesture.
+    @discardableResult
     func resizeBoundary(leading: SlotID, trailing: SlotID, leadingFraction: Double,
-                        trailingFraction: Double?, windowWidth: CGFloat) {
-        // Deliberately a hair above zero, not the section's minimum width: dragging a
-        // section below its minimum is how you collapse it to a rail. The layout engine
-        // decides where that threshold is; the drag just has to be able to cross it.
-        let floor = WorkspaceLayout.minPinnedFraction
-        guard let trailingFraction else {
-            layout[leading].isPinned = true
-            layout[leading].pinnedFraction = min(max(leadingFraction, floor), 1.0 - floor)
-            commit()
-            return
+                        trailingFraction: Double?, windowWidth: CGFloat,
+                        leadingMin: CGFloat, trailingMin: CGFloat) -> BoundaryFeedback {
+        let width = max(windowWidth, 1)
+        let leadFloor = max(Double(leadingMin / width), WorkspaceLayout.minPinnedFraction)
+        let trailFloor = max(Double(trailingMin / width), WorkspaceLayout.minPinnedFraction)
+        let overshoot = Double(Self.collapseOvershoot / width)
+
+        var feedback = BoundaryFeedback.free
+        if leadingFraction < leadFloor - overshoot {
+            feedback = .willCollapse(leading)
+        } else if leadingFraction <= leadFloor {
+            feedback = .atMinimum(leading)
         }
+
+        guard let trailingFraction else {
+            let clamped = min(max(leadingFraction, leadFloor), 1.0 - WorkspaceLayout.minPinnedFraction)
+            layout[leading].isPinned = true
+            layout[leading].pinnedFraction = clamped
+            commit()
+            return feedback
+        }
+
         let total = leadingFraction + trailingFraction
-        let newLeading = min(max(leadingFraction, floor), max(floor, total - floor))
+        if total - leadingFraction < trailFloor - overshoot {
+            feedback = .willCollapse(trailing)
+        } else if total - leadingFraction <= trailFloor, case .free = feedback {
+            feedback = .atMinimum(trailing)
+        }
+
+        // Both floors have to fit inside the pair's combined share; if they don't,
+        // split it and let the forced-collapse pass sort it out.
+        let newLeading = total - trailFloor < leadFloor
+            ? total / 2
+            : min(max(leadingFraction, leadFloor), total - trailFloor)
         layout[leading].isPinned = true
         layout[leading].pinnedFraction = newLeading
         layout[trailing].isPinned = true
-        layout[trailing].pinnedFraction = max(total - newLeading, floor)
+        layout[trailing].pinnedFraction = max(total - newLeading, WorkspaceLayout.minPinnedFraction)
         commit()
+        return feedback
+    }
+
+    // MARK: - Collapse / Normal / Maximize
+
+    /// The slot currently taking the full window, if any.
+    private(set) var maximizedSlot: SlotID?
+    /// Layout as it was before the current maximize, so Normal is a true undo.
+    @ObservationIgnored private var restorePoint: WorkspaceLayout?
+
+    enum SizeState: Equatable {
+        case collapsed
+        case normal
+        case maximized
+    }
+
+    func sizeState(_ id: SlotID) -> SizeState {
+        if layout[id].isCollapsed { return .collapsed }
+        if maximizedSlot == id { return .maximized }
+        return .normal
+    }
+
+    func collapse(_ id: SlotID) {
+        guard layout[id].section != nil, !layout[id].isFloating else { return }
+        layout[id].isCollapsed = true
+        if maximizedSlot == id { maximizedSlot = nil }
+        commit()
+    }
+
+    /// Full width. Every other TILED section collapses to a rail to make room —
+    /// floating sections are untouched, since they overlay rather than compete for
+    /// width. `normal` puts it all back.
+    func maximize(_ id: SlotID) {
+        guard layout[id].section != nil, !layout[id].isFloating else { return }
+        if restorePoint == nil { restorePoint = layout }
+        layout[id].isCollapsed = false
+        layout[id].isPinned = false
+        for slot in layout.slots where slot.id != id && slot.section != nil && !slot.isFloating {
+            layout[slot.id].isCollapsed = true
+        }
+        maximizedSlot = id
+        commit()
+    }
+
+    /// Back to the arrangement before the maximize, or — if there was none — simply
+    /// visible and flexible again, with pinned neighbours scaled down until this slot
+    /// clears `minFraction`. Always succeeds; it is the only way off a rail.
+    func normal(_ id: SlotID) {
+        if let restorePoint, maximizedSlot != nil {
+            layout = restorePoint
+            self.restorePoint = nil
+            maximizedSlot = nil
+            layout[id].isCollapsed = false
+            commit()
+            return
+        }
+        restorePoint = nil
+        maximizedSlot = nil
+        restore(id, minFraction: minFraction(id))
     }
 
     /// Bring a collapsed slot back: make it flexible, and if pinned neighbours are what
@@ -134,6 +254,7 @@ final class LayoutStore {
     func restore(_ id: SlotID, minFraction: Double) {
         layout[id].isPinned = false
         layout[id].isFloating = false
+        layout[id].isCollapsed = false
         let others = layout.slots.filter {
             $0.id != id && $0.section != nil && !$0.isFloating && $0.isPinned
         }

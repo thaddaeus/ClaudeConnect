@@ -37,7 +37,18 @@ enum TerminalMetrics {
 
     /// Slack for SwiftTerm's own insets and scroller so 80 columns genuinely fit
     /// rather than landing one cell short.
-    private static let chrome: CGFloat = 14
+    static let chrome: CGFloat = 14
+
+    /// Columns a terminal area of `width` points renders. Used for the live
+    /// `cols × rows` readout while a slot splitter is being dragged — the only
+    /// dimension a terminal user actually thinks in.
+    static func columns(forWidth width: CGFloat) -> Int {
+        max(0, Int((width - chrome) / cellWidth))
+    }
+
+    static func rows(forHeight height: CGFloat) -> Int {
+        max(0, Int(height / cellHeight))
+    }
 
     /// Narrowest the console may be rendered: 80 columns. ≈544pt at Menlo 11pt.
     /// Below this the console slot collapses to a rail instead of shrinking further.

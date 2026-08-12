@@ -22,6 +22,7 @@ struct WorkspaceView: View {
     @State private var hoveredDropSlot: SlotID?
     @State private var splitterDrag: SplitterDrag?
     @State private var floatDrag: FloatDrag?
+    @State private var dragFeedback: BoundaryFeedback = .free
 
     var body: some View {
         GeometryReader { proxy in
@@ -44,11 +45,21 @@ struct WorkspaceView: View {
 
                 splitterHandles(resolved, size)
 
+                dragReadouts(resolved, size)
+
                 if draggingSection != nil {
                     dropTargets(size)
                 }
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
+            // Publish the live geometry so the store can work out a section's minimum
+            // fraction on its own — the header control, the context menu and the
+            // menu-bar Layout menu then all reach the same answer without threading
+            // geometry through three call sites.
+            .onChange(of: size, initial: true) { _, newSize in
+                layout.workspaceWidth = newSize.width
+                layout.sectionMinWidths = Self.minWidths
+            }
         }
         .onAppear(perform: syncBrowserModel)
         .onChange(of: layout.isOpen(.browser)) { _, _ in syncBrowserModel() }
@@ -65,6 +76,7 @@ struct WorkspaceView: View {
     private static var minWidths: [SectionKind: CGFloat] {
         [.console: TerminalMetrics.minimumWidth, .browser: 320]
     }
+
 
     private func consoleSection(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         // The console always holds a slot (WorkspaceLayout.normalize guarantees it)
@@ -138,8 +150,7 @@ struct WorkspaceView: View {
         ForEach(SlotID.allCases) { id in
             if let rect = resolved.collapsed[id], let kind = layout[id].section {
                 Button {
-                    layout.restore(id, minFraction: Double((Self.minWidths[kind]
-                        ?? WorkspaceLayout.minSlotWidth) / max(size.width, 1)))
+                    layout.normal(id)
                 } label: {
                     VStack(spacing: 6) {
                         Image(systemName: kind.symbol)
@@ -180,8 +191,8 @@ struct WorkspaceView: View {
                 .frame(width: 8, height: size.height)
                 .overlay {
                     Rectangle()
-                        .fill(Color(nsColor: .separatorColor))
-                        .frame(width: 1)
+                        .fill(splitterColor(splitter))
+                        .frame(width: splitterIsActive(splitter) ? 3 : 1)
                 }
                 .contentShape(Rectangle())
                 .offset(x: splitter.x - 4, y: 0)
@@ -193,12 +204,29 @@ struct WorkspaceView: View {
         }
     }
 
+    /// The splitter thickens and changes colour as the drag reaches a section's floor,
+    /// so the resistance is visible at the pointer as well as in the readout.
+    private func splitterIsActive(_ splitter: SplitterPosition) -> Bool {
+        guard let id = dragFeedback.slot else { return false }
+        return id == splitter.leading || id == splitter.trailing
+    }
+
+    private func splitterColor(_ splitter: SplitterPosition) -> Color {
+        guard splitterIsActive(splitter) else { return Color(nsColor: .separatorColor) }
+        if case .willCollapse = dragFeedback { return .orange }
+        return .accentColor
+    }
+
     private func splitterGesture(_ splitter: SplitterPosition,
                                  _ resolved: ResolvedWorkspaceLayout,
                                  _ size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
                 guard size.width > 0 else { return }
+                let leadingMin = Self.minWidths[layout[splitter.leading].section ?? .console]
+                    ?? WorkspaceLayout.minSlotWidth
+                let trailingMin = Self.minWidths[layout[splitter.trailing].section ?? .console]
+                    ?? WorkspaceLayout.minSlotWidth
                 // Keyed by the gesture's start location as well as the splitter, because
                 // dragging a section past its minimum collapses it — which removes this
                 // splitter mid-gesture, so `onEnded` never fires and stale state would
@@ -225,15 +253,76 @@ struct WorkspaceView: View {
                     splitterDrag = drag
                 }
                 let delta = Double(value.translation.width / size.width)
-                layout.resizeBoundary(
+                dragFeedback = layout.resizeBoundary(
                     leading: drag.leading,
                     trailing: drag.trailing,
                     leadingFraction: drag.leadingFraction + delta,
                     trailingFraction: drag.trailingFraction.map { $0 - delta },
-                    windowWidth: size.width
+                    windowWidth: size.width,
+                    leadingMin: leadingMin,
+                    trailingMin: trailingMin
                 )
             }
-            .onEnded { _ in splitterDrag = nil }
+            .onEnded { _ in
+                // Collapse commits on RELEASE, never mid-drag: the section holds at its
+                // minimum while the pointer runs past it, and only letting go hides it.
+                if case .willCollapse(let id) = dragFeedback {
+                    layout.collapse(id)
+                }
+                dragFeedback = .free
+                splitterDrag = nil
+            }
+    }
+
+    /// Live readout over each section adjacent to the splitter being dragged. For the
+    /// console that is `cols × rows`, the only dimensions a terminal user thinks in —
+    /// and it turns accented at the 80-column floor, so hitting the minimum is
+    /// something you SEE rather than something that just happens.
+    @ViewBuilder
+    private func dragReadouts(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        if let drag = splitterDrag {
+            ForEach([drag.leading, drag.trailing], id: \.self) { id in
+                if let rect = resolved.tiled[id], let kind = layout[id].section {
+                    readout(for: kind, rect: rect, isSubject: dragFeedback.slot == id)
+                        .offset(x: rect.midX - 70, y: rect.midY - 18)
+                        .frame(width: 140, height: 36)
+                        .zIndex(20)
+                }
+            }
+        }
+    }
+
+    private func readout(for kind: SectionKind, rect: CGRect, isSubject: Bool) -> some View {
+        let collapsing = isSubject && { if case .willCollapse = dragFeedback { return true } else { return false } }()
+        let atMin = isSubject && !collapsing
+        let text: String
+        if collapsing {
+            text = "Release to hide"
+        } else if kind == .console {
+            // The terminal area is the slot minus the section header and the tab bar.
+            let chrome = SectionHeaderView.height + 36
+            text = "\(TerminalMetrics.columns(forWidth: rect.width)) × \(TerminalMetrics.rows(forHeight: max(0, rect.height - chrome)))"
+        } else {
+            text = "\(Int(rect.width)) pt"
+        }
+        return Text(text)
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(collapsing ? Color.orange : (atMin ? Color.accentColor : Color.black.opacity(0.7)),
+                        in: Capsule())
+            .overlay(alignment: .bottom) {
+                if atMin {
+                    Text(kind == .console ? "minimum — \(TerminalMetrics.standardColumns) columns" : "minimum")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor, in: Capsule())
+                        .offset(y: 16)
+                }
+            }
     }
 
     // MARK: - Floating

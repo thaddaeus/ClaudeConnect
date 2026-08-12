@@ -104,19 +104,26 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
     /// FLOATING: overlays the tiled sections and consumes no layout space.
     var isFloating: Bool = false
     var floatingFrame: NormalizedRect = .defaultFloating
+    /// COLLAPSED by choice — the user dragged past the minimum and released, hit the
+    /// collapse control, or maximized a sibling. Distinct from the *forced* collapse
+    /// `resolve` applies when the window is simply too narrow: that one is derived and
+    /// evaporates when the window grows, this one persists until the user undoes it.
+    var isCollapsed: Bool = false
 
     init(id: SlotID,
          section: SectionKind? = nil,
          isPinned: Bool = false,
          pinnedFraction: Double = 0.4,
          isFloating: Bool = false,
-         floatingFrame: NormalizedRect = .defaultFloating) {
+         floatingFrame: NormalizedRect = .defaultFloating,
+         isCollapsed: Bool = false) {
         self.id = id
         self.section = section
         self.isPinned = isPinned
         self.pinnedFraction = pinnedFraction
         self.isFloating = isFloating
         self.floatingFrame = floatingFrame
+        self.isCollapsed = isCollapsed
     }
 
     /// Tolerant decoding: a layout file written by an older build is missing keys a
@@ -129,6 +136,7 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
         pinnedFraction = try c.decodeIfPresent(Double.self, forKey: .pinnedFraction) ?? 0.4
         isFloating = try c.decodeIfPresent(Bool.self, forKey: .isFloating) ?? false
         floatingFrame = try c.decodeIfPresent(NormalizedRect.self, forKey: .floatingFrame) ?? .defaultFloating
+        isCollapsed = try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
     }
 }
 
@@ -199,7 +207,8 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             }
             config.pinnedFraction = min(max(config.pinnedFraction, WorkspaceLayout.minPinnedFraction), 1.0)
             if config.section?.canFloat == false { config.isFloating = false }
-            if config.section == nil { config.isFloating = false }
+            if config.section == nil { config.isFloating = false; config.isCollapsed = false }
+            if config.isFloating { config.isCollapsed = false }
             repaired.append(config)
         }
         // The console must always have a home.
@@ -259,10 +268,18 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             slot.section.flatMap { minWidths[$0] } ?? WorkspaceLayout.minSlotWidth
         }
 
-        // Collapse pass: widen the collapsed set one slot at a time until every
+        // Slots the user collapsed on purpose start out collapsed. Never leave the
+        // window with nothing in it — the console (failing that, the first tiled slot)
+        // always survives.
+        var collapsed = Set(allTiled.filter(\.isCollapsed).map(\.id))
+        if collapsed.count == allTiled.count,
+           let keep = allTiled.first(where: { $0.section == .console }) ?? allTiled.first {
+            collapsed.remove(keep.id)
+        }
+
+        // Forced-collapse pass: widen the collapsed set one slot at a time until every
         // surviving slot clears its floor. Bounded by the slot count, so at most a
         // couple of iterations.
-        var collapsed: Set<SlotID> = []
         var widths: [SlotID: CGFloat] = [:]
         var holes: [SlotID: CGFloat] = [:]
         while true {

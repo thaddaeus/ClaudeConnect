@@ -48,6 +48,8 @@ struct SectionHeaderView: View {
 
             Spacer(minLength: 4)
 
+            sizeStateControl
+
             Menu {
                 SectionLayoutMenu(kind: kind, layout: layout)
             } label: {
@@ -77,6 +79,42 @@ struct SectionHeaderView: View {
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(Rectangle())
         .help(helpText)
+    }
+
+    /// Collapse / Normal / Maximize, with the live state lit. Three explicit states
+    /// beat a splitter drag for the ones you actually mean, and make "hidden" a place
+    /// you can deliberately go and come back from.
+    private var sizeStateControl: some View {
+        HStack(spacing: 0) {
+            stateButton(.collapsed, symbol: "arrow.right.and.line.vertical.and.arrow.left",
+                        help: "Collapse \(kind.title) to a rail")
+            stateButton(.normal, symbol: "rectangle.split.2x1",
+                        help: "\(kind.title) at its normal size")
+            stateButton(.maximized, symbol: "arrow.left.and.line.vertical.and.arrow.right",
+                        help: "\(kind.title) full width — collapses the other tiled sections")
+        }
+        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func stateButton(_ state: LayoutStore.SizeState, symbol: String, help: String) -> some View {
+        let isActive = layout.sizeState(slot.id) == state
+        return Button {
+            switch state {
+            case .collapsed: layout.collapse(slot.id)
+            case .normal:    layout.normal(slot.id)
+            case .maximized: layout.maximize(slot.id)
+            }
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 9))
+                .frame(width: 20, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+        .background(isActive ? Color(nsColor: .controlBackgroundColor) : .clear,
+                    in: RoundedRectangle(cornerRadius: 4))
+        .help(help)
     }
 
     static let height: CGFloat = 24
@@ -135,6 +173,13 @@ struct SectionLayoutMenu: View {
             }
 
             Menu("Size") {
+                Button("Collapse") { layout.collapse(slot.id) }
+                    .disabled(layout.sizeState(slot.id) == .collapsed)
+                Button("Normal") { layout.normal(slot.id) }
+                    .disabled(layout.sizeState(slot.id) == .normal)
+                Button("Full Width") { layout.maximize(slot.id) }
+                    .disabled(layout.sizeState(slot.id) == .maximized)
+                Divider()
                 Button("Flexible") { layout.makeFlexible(slot.id) }
                     .disabled(!slot.isPinned)
                 Divider()
