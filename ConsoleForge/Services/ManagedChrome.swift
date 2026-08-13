@@ -229,6 +229,54 @@ final class ManagedChrome {
         }
     }
 
+    /// Delete profile directories whose session no longer exists.
+    ///
+    /// A profile is a real browser profile — cookies, logins, history — so it lives
+    /// exactly as long as the session it belongs to, and not one launch longer. A saved
+    /// session keeps its UUID across close and reopen, so its profile survives and you
+    /// stay logged in; an EPHEMERAL tab is deleted from the store when it closes, and its
+    /// profile then belongs to nobody. Without this they accumulate silently: five
+    /// throwaway tabs during the Phase C test run left 81 MB behind.
+    ///
+    /// Deliberately keyed on "the session is gone", not "the tab is closed" — deleting a
+    /// saved session's browser state every time its tab closed would log the user out of
+    /// everything, repeatedly, for no reason they could see.
+    func pruneProfiles(knownSessionIDs: Set<UUID>) {
+        let fm = FileManager.default
+        guard let dirs = try? fm.contentsOfDirectory(at: Self.profilesDirectory,
+                                                     includingPropertiesForKeys: nil) else { return }
+        // `instances` only knows about browsers WE started. This runs right after
+        // reapOrphans(), which merely SIGTERMs a stranded Chrome from a previous run and
+        // does not wait — so without this the directory could be deleted out from under a
+        // browser still writing its profile out. One `ps` for the whole sweep.
+        let commands = Self.runningCommandLines()
+        for dir in dirs {
+            // Only ever touch directories that are named like one of ours, and never one
+            // whose browser is live right now.
+            guard let id = UUID(uuidString: dir.lastPathComponent),
+                  !knownSessionIDs.contains(id),
+                  instances[id] == nil,
+                  !commands.contains("--user-data-dir=\(dir.path)") else { continue }
+            try? fm.removeItem(at: dir)
+            print("ManagedChrome: pruned orphaned profile for \(id.uuidString)")
+        }
+    }
+
+    /// Every running process's command line, in one shot, so the prune can tell a dead
+    /// profile from one a shutting-down browser still has open.
+    private static func runningCommandLines() -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/ps")
+        p.arguments = ["-eo", "command="]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return "" }
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        p.waitUntilExit()
+        return out
+    }
+
     /// Is `pid` alive AND actually a Chrome running against `profile`? Both halves matter:
     /// the first alone would be a pid-reuse hazard.
     private static func isAlive(_ pid: Int32, profile: URL) -> Bool {

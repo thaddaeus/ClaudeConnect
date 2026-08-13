@@ -216,6 +216,9 @@ struct ConsoleForgeApp: App {
                     // Chromes stranded by a previous run (force-quit, crash) are killed
                     // here — see ManagedChrome.reapOrphans.
                     ManagedChrome.shared.reapOrphans()
+                    // …and reclaim profile directories whose session is gone entirely.
+                    ManagedChrome.shared.pruneProfiles(
+                        knownSessionIDs: Set(store.sessions.map(\.id)))
 
                     // The voice channel follows the ACTIVE tab: what you hear is what
                     // you're looking at. Resolving it through a closure keeps
