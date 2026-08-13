@@ -217,6 +217,18 @@ support directory and Keychain namespace, so production ships no buffer, no file
 and no HUD. The HUD flags it when the container's column count and SwiftTerm's grid
 disagree — that mismatch is the whole bug class.
 
+**Verifying the terminal never regresses: `./scripts/geometry-pass.py`.** The manual
+protocol for this was nine steps that each had to be performed exactly, which is a trap
+rather than a test — and the most important check is one a human cannot perform at all:
+noticing a reflow that happened when NOBODY ASKED FOR ONE. A spontaneous reflow looks
+like nothing. So the script drives ~40 gestures through the Layout menu BY NAME (never
+mouse coordinates, so each step is exact), timestamps every one, and grades them against
+`geometry.jsonl`: zero rejected geometries, zero container/grid disagreements, zero
+reflows without a gesture behind them, and the console holding its WIDTH when a sibling
+closes (its height may legitimately change — a lone row fills). Beta only; production
+writes no trace. Re-run it for any change that touches layout or terminal sizing. It does
+NOT cover sleep/wake or display connect/disconnect — do those by hand.
+
 There are exactly TWO writers of a terminal view's frame — `TerminalSession.resize`
 (reached only from the manager) and the mount in `TerminalHostView.updateNSView`. Both
 are gated on `TerminalMetrics.isUsable`. Adding a third, or ungating either, is how the
