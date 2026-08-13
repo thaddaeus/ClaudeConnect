@@ -47,6 +47,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // A child process is NOT killed by its parent exiting — it is reparented to
+        // launchd and keeps running. Without this, quitting ConsoleForge would strand
+        // every managed Chrome, and "the browser dies with the tab" would be true only
+        // while the app happened to be alive. Synchronous: there is no run loop left to
+        // await a grace period on.
+        MainActor.assumeIsolated { ManagedChrome.shared.terminateAllNow() }
         if let token = activityToken {
             ProcessInfo.processInfo.endActivity(token)
             activityToken = nil
@@ -137,6 +143,9 @@ struct ConsoleForgeApp: App {
     /// The window's slot layout (which section sits where, and how each slot sizes
     /// itself). Held at app scope so the menu-bar Layout menu can drive it too.
     @State private var layoutStore = LayoutStore()
+    /// Chrome instances owned by tabs (Phase C). A singleton because the app delegate
+    /// has to reach it at terminate, and there is exactly one per app.
+    @State private var chrome = ManagedChrome.shared
     @State private var voice = VoiceController()
     @State private var commandWatcher = CommandWatcher()
     @State private var companionSettings: CompanionSettings
@@ -174,6 +183,7 @@ struct ConsoleForgeApp: App {
                 .environment(activityTracker)
                 .environment(terminalManager)
                 .environment(layoutStore)
+                .environment(chrome)
                 .environment(voice)
                 .environment(companionAuth)
                 .environment(supportReporter)
@@ -197,7 +207,15 @@ struct ConsoleForgeApp: App {
                     // by one wire.
                     store.onTabClosed = { tabID in
                         activityTracker.removeTab(tabID: tabID)
+                        // Criterion 14's second half. Every close path funnels through
+                        // store.closeTab, so this one wire covers the tab bar, the menu,
+                        // the CLI and a process exit.
+                        ManagedChrome.shared.terminate(tabID)
                     }
+
+                    // Chromes stranded by a previous run (force-quit, crash) are killed
+                    // here — see ManagedChrome.reapOrphans.
+                    ManagedChrome.shared.reapOrphans()
 
                     // The voice channel follows the ACTIVE tab: what you hear is what
                     // you're looking at. Resolving it through a closure keeps
@@ -286,6 +304,18 @@ struct ConsoleForgeApp: App {
             }
 
             CommandGroup(after: .newItem) {
+                Button(chrome.isRunning(store.activeTabID ?? UUID())
+                       ? "Close This Tab\u{2019}s Chrome" : "Open Chrome for This Tab") {
+                    guard let active = store.activeTabID else { return }
+                    if chrome.isRunning(active) {
+                        chrome.terminate(active)
+                    } else {
+                        chrome.open(tabID: active)
+                    }
+                }
+                .keyboardShortcut("b", modifiers: [.command, .option])
+                .disabled(store.activeTabID == nil || !chrome.isAvailable)
+
                 Button("Open Document\u{2026}") {
                     // Raise the strip first, so the panel's result lands somewhere the
                     // user can already see.

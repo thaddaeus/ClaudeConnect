@@ -5,6 +5,7 @@ struct TerminalTabBar: View {
     @Environment(SessionStore.self) private var store
     @Environment(TabActivityTracker.self) private var activityTracker
     @Environment(VoiceController.self) private var voice
+    @Environment(ManagedChrome.self) private var chrome
     @State private var hoveredTabID: UUID?
     @State private var draggingTabID: UUID?
     @State private var dropTargetTabID: UUID?
@@ -140,6 +141,16 @@ struct TerminalTabBar: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
+            // This tab owns a Chrome. Without a mark the only way to know is to go
+            // looking in the Dock, and the whole point of the feature is that the
+            // browser belongs to the tab.
+            if chrome.isRunning(session.id) {
+                Image(systemName: "globe")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.accentColor)
+                    .help("This tab owns a Chrome window — it closes with the tab")
+            }
+
             Text(session.name)
                 .font(.system(size: 12))
                 .lineLimit(1)
@@ -244,6 +255,28 @@ struct TerminalTabBar: View {
                     Label("Save to Sidebar", systemImage: "square.and.arrow.down")
                 }
 
+                Divider()
+            }
+
+            if chrome.isAvailable {
+                if chrome.isRunning(session.id) {
+                    Button {
+                        chrome.open(tabID: session.id)
+                    } label: {
+                        Label("Focus Chrome", systemImage: "globe")
+                    }
+                    Button {
+                        chrome.terminate(session.id)
+                    } label: {
+                        Label("Close Chrome", systemImage: "globe.badge.chevron.backward")
+                    }
+                } else {
+                    Button {
+                        chrome.open(tabID: session.id)
+                    } label: {
+                        Label("Open Chrome", systemImage: "globe")
+                    }
+                }
                 Divider()
             }
 

@@ -286,6 +286,33 @@ scope decision would orphan every saved layout — but its user-facing name says
 does. No save path, no dirty state, no file watcher; the toolbar's Reload is how an
 external change is picked up.
 
+## Managed Chrome (Phase C)
+
+A tab can own a Chrome instance. **Soft attach, never a pixel embed** — Chrome runs as
+its own application window and what ConsoleForge owns is its LIFETIME. Embedding would
+mean CEF: a second browser engine to keep patched, for a rectangle.
+
+Ownership is real, not nominal. Chrome is spawned as a **child process** (`Process`,
+launching the binary directly) rather than handed to `open`, which would detach it into
+launchd and leave nothing to terminate. Each instance gets its own `--user-data-dir`
+under `…/ConsoleForge[ Beta]/chrome-profiles/<tabID>`, so it is a genuinely separate
+browser — separate cookies, separate logins — that never touches the user's real Chrome.
+
+Four teardown paths, all covered and all tested (`./scripts/chrome-lifecycle-test.py`):
+closing the tab (the criterion), the CLI close path, quitting the app, and
+**force-killing the app** — a child is NOT killed by its parent dying, so SIGKILL strands
+the browser under launchd. That last one is why each instance writes
+`…/chrome/<tabID>.json` with its pid: on next launch `reapOrphans()` finds and kills
+them. A recorded pid is never trusted on its own — pids are recycled — so each is
+verified to still be a Chrome running against OUR profile directory first.
+
+That metadata file also publishes `--remote-debugging-port`, which is the cheap half of
+CDP: a session can read its own file and point the chrome-devtools MCP at ITS OWN
+browser rather than whatever Chrome happens to be running. In-app CDP console/network
+capture is a deliberate non-goal here; it is the later escalation the original task
+described, and it is what would finally close the Web Output gap (subresource loads are
+invisible from inside a WKWebView page).
+
 ## Key Design Decisions
 - Terminal views are kept alive in a ZStack (hidden via AppKit isHidden) to preserve running processes when switching tabs
 - Sessions persist to `~/Library/Application Support/ConsoleForge/sessions.json`
