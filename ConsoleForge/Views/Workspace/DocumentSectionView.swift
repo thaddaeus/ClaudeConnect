@@ -165,17 +165,6 @@ struct DocumentTabBar: View {
         return parent.tabColor
     }
 
-    /// How strongly the parent's colour washes a document tab.
-    ///
-    /// Three levels, because the wash is answering two questions at once — "whose group
-    /// is this" and "is that group live". Kept low: these are saturated tab colours over
-    /// a control background, and past roughly a quarter opacity the label starts losing
-    /// contrast in light mode.
-    private func groupWash(isActive: Bool, hasFocus: Bool) -> Double {
-        if isActive { return 0.26 }
-        return hasFocus ? 0.17 : 0.09
-    }
-
     private func groupHasFocus(parentID: UUID) -> Bool {
         guard let focusedID = store.focusedTabID else { return false }
         if focusedID == parentID { return true }
@@ -225,11 +214,12 @@ struct DocumentTabBar: View {
             // The group's colour WASHES THE WHOLE TAB, not just the stripe across its
             // top. Which console tab a document belongs to is the thing you scan this
             // strip for, and a 1.5pt line was carrying that on its own. The wash is the
-            // bottom layer so selection and hover still read on top of it.
+            // bottom layer so selection and hover still read on top of it. Levels come
+            // from `TabGroupWash` so the two strips cannot drift apart.
             ZStack {
                 if let parentColor, let pid = session.parentTabID {
-                    parentColor.opacity(groupWash(isActive: isActive,
-                                                  hasFocus: groupHasFocus(parentID: pid)))
+                    parentColor.opacity(TabGroupWash.opacity(
+                        isActive: isActive, hasFocus: groupHasFocus(parentID: pid)))
                 }
                 if isActive {
                     Color(nsColor: .selectedControlColor).opacity(0.3)

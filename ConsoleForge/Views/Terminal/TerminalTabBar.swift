@@ -74,6 +74,21 @@ struct TerminalTabBar: View {
         return parent.tabColor
     }
 
+    /// The group this tab belongs to, for the background wash: the colour to paint and
+    /// the tab that anchors the group.
+    ///
+    /// A PARENT is washed as well as its children, in its own colour — which is the
+    /// group's colour — so the run reads as one block rather than a plain tab followed by
+    /// tinted ones. Children count across BOTH strips, so a console tab that owns nothing
+    /// but documents still shows it owns something.
+    private func groupWash(for session: SessionConfiguration) -> (color: Color, anchor: UUID)? {
+        if let pid = session.parentTabID, store.openTabIDs.contains(pid),
+           let parent = store.session(for: pid) {
+            return (parent.tabColor, pid)
+        }
+        return store.childTabs(of: session.id).isEmpty ? nil : (session.tabColor, session.id)
+    }
+
     /// Whether the focused tab is a grouped child of `session` — the parent's
     /// trailing edge dims so the focused child reads as sitting in front. Follows the
     /// FOCUSED tab across both strips, so a console tab whose document child was just
@@ -115,6 +130,7 @@ struct TerminalTabBar: View {
         let parentColor = groupParentColor(for: session)
         let capsGroup = parentColor != nil && isLastInGroup(session)
         let yieldsToChild = isParentOfActiveTab(session)
+        let wash = groupWash(for: session)
         return HStack(spacing: 6) {
             Circle()
                 .fill(activity.statusDotColor)
@@ -142,11 +158,21 @@ struct TerminalTabBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(
-            isActive
-                ? Color(nsColor: .selectedControlColor).opacity(0.3)
-                : (isHovered ? Color.primary.opacity(0.06) : .clear)
-        )
+        .background {
+            // The group's colour washes the whole tab, under the selection and hover
+            // layers. Same treatment, same numbers, as the Documents strip.
+            ZStack {
+                if let wash {
+                    wash.color.opacity(TabGroupWash.opacity(
+                        isActive: isActive, hasFocus: groupHasFocus(parentID: wash.anchor)))
+                }
+                if isActive {
+                    Color(nsColor: .selectedControlColor).opacity(0.3)
+                } else if isHovered {
+                    Color.primary.opacity(0.06)
+                }
+            }
+        }
         .overlay(alignment: .leading) {
             if dropTargetTabID == session.id {
                 Rectangle()
@@ -218,6 +244,27 @@ struct TerminalTabBar: View {
                 Label("Close Tab", systemImage: "xmark")
             }
         }
+    }
+}
+
+// MARK: - Tab group wash
+
+/// How strongly a tab is washed in its GROUP's colour — the parent's colour on a child,
+/// its own on a parent that has open children.
+///
+/// One definition for both strips. The console strip and the Documents strip render
+/// separately (activity dots and a voice toggle on one, a path and a missing-file glyph
+/// on the other), so the thing that has to stay identical between them is the colour
+/// language, and that is this.
+///
+/// Three levels, because the wash answers two questions at once — whose group this is,
+/// and whether that group is live. Bounded by contrast, not taste: these are saturated
+/// tab colours over a control background, and pushed much past a third the label starts
+/// to go soft in light mode.
+enum TabGroupWash {
+    static func opacity(isActive: Bool, hasFocus: Bool) -> Double {
+        if isActive { return 0.34 }
+        return hasFocus ? 0.24 : 0.13
     }
 }
 
