@@ -273,6 +273,16 @@ struct ConsoleForgeApp: App {
                     store.addFolder(name: "New Folder")
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
+
+                // The explicit way to make a CHILD from the UI. Plain ⌘N stays an
+                // independent session: `parentTabID` means "this tab came from that one",
+                // and attaching it to whatever happened to be focused would demote it to
+                // "these were open at the same time" — and colour most of the strip.
+                Button("New Tab in Group") {
+                    if let active = store.activeTabID { store.openChildTab(of: active) }
+                }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(store.activeTabID == nil)
             }
 
             CommandGroup(after: .newItem) {

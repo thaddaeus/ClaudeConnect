@@ -228,6 +228,15 @@ struct TerminalTabBar: View {
             store.switchToTab(sessionID: session.id)
         }
         .contextMenu {
+            Button {
+                store.openChildTab(of: session.id)
+            } label: {
+                Label(session.parentTabID == nil ? "New Tab in This Group" : "New Tab in Group",
+                      systemImage: "plus.rectangle.on.rectangle")
+            }
+
+            Divider()
+
             if session.isEphemeral {
                 Button {
                     store.saveEphemeralSession(id: session.id)

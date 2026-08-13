@@ -317,6 +317,52 @@ class SessionStore {
         save()
     }
 
+    /// The tab a new group member should be parented to: the group's anchor, so asking
+    /// for a sibling from a CHILD joins that child's group rather than nesting a second
+    /// level under it. Grouping is one level deep by design.
+    func groupAnchor(of id: UUID) -> UUID {
+        groupParent(of: id) ?? id
+    }
+
+    /// A new terminal tab in `id`'s group — another session like that one, in the same
+    /// place, opened straight away.
+    ///
+    /// Deliberately NOT what ⌘N does. ⌘N makes an INDEPENDENT session and opens the
+    /// editor so you can configure it; `parentTabID` records that one tab came from
+    /// another, and auto-applying it to every ⌘N would turn it into "these happened to be
+    /// open together" and make the group colour meaningless. This is the explicit way to
+    /// ask for a child from the UI, which is why it inherits the parent's launch settings
+    /// and skips the editor: "another one of these, here". Ephemeral, like every other
+    /// spawned child — a group member is a working tab, not a sidebar entry.
+    @discardableResult
+    func openChildTab(of id: UUID) -> UUID? {
+        let anchorID = groupAnchor(of: id)
+        guard let parent = session(for: anchorID), parent.isTerminal else { return nil }
+        var child = parent
+        child.id = UUID()
+        child.parentTabID = anchorID
+        child.name = childName(basedOn: parent.name)
+        // Identity and one-shot behaviour do not inherit: the child owns its own Claude
+        // session, and re-firing the parent's opening prompt in a new tab is never right.
+        child.claudeSessionID = nil
+        child.initialPrompt = nil
+        child.autoStart = false
+        child.continueSession = false
+        child.folderID = nil
+        // Its own colour, so siblings are still tellable apart under the shared group wash.
+        child.tabColorHex = Self.defaultColors[sessions.count % Self.defaultColors.count]
+        openEphemeralTab(child)
+        return child.id
+    }
+
+    /// "Phase B Test" → "Phase B Test 2", then 3, skipping anything already taken.
+    private func childName(basedOn base: String) -> String {
+        let taken = Set(sessions.map(\.name))
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
     /// Open a read-only document tab, parented to `parentTabID` (normally the console tab
     /// the user opened it from). Re-focuses an existing tab for the same file rather than
     /// stacking duplicates.
