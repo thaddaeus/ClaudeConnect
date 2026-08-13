@@ -286,6 +286,11 @@ struct LayoutCommands: Commands {
             }
             .keyboardShortcut("j", modifiers: [.command, .shift])
 
+            Button(layout.isOpen(.editor) ? "Hide Documents" : "Show Documents") {
+                layout.toggle(.editor)
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+
             Divider()
 
             ForEach(SectionKind.allCases) { kind in

@@ -217,6 +217,18 @@ support directory and Keychain namespace, so production ships no buffer, no file
 and no HUD. The HUD flags it when the container's column count and SwiftTerm's grid
 disagree — that mismatch is the whole bug class.
 
+**Verifying the terminal never regresses: `./scripts/geometry-pass.py`.** The manual
+protocol for this was nine steps that each had to be performed exactly, which is a trap
+rather than a test — and the most important check is one a human cannot perform at all:
+noticing a reflow that happened when NOBODY ASKED FOR ONE. A spontaneous reflow looks
+like nothing. So the script drives ~40 gestures through the Layout menu BY NAME (never
+mouse coordinates, so each step is exact), timestamps every one, and grades them against
+`geometry.jsonl`: zero rejected geometries, zero container/grid disagreements, zero
+reflows without a gesture behind them, and the console holding its WIDTH when a sibling
+closes (its height may legitimately change — a lone row fills). Beta only; production
+writes no trace. Re-run it for any change that touches layout or terminal sizing. It does
+NOT cover sleep/wake or display connect/disconnect — do those by hand.
+
 There are exactly TWO writers of a terminal view's frame — `TerminalSession.resize`
 (reached only from the manager) and the mount in `TerminalHostView.updateNSView`. Both
 are gated on `TerminalMetrics.isUsable`. Adding a third, or ungating either, is how the
@@ -233,6 +245,46 @@ frame on a terminal view, never animate a slot rect, and never add a second resi
 Watch for `if/else` in the view tree around a section (that is what
 `FloatingDecoration` avoids) — a `_ConditionalContent` swap changes structural identity
 and rebuilds the hosted NSView.
+
+## Tabs: view kinds and per-strip contiguity
+
+A tab is a **`ViewKind`**: `.terminal` (a Claude CLI session with a PTY) or `.document`
+(a read-only file). "Session" used to mean "thing with a PTY" everywhere — `PtyProcess`,
+`ClaudeProcessBuilder`, `autoStart`, resume, the voice channel, `PendingPromptProbe` — so
+**every one of those paths now reads `SessionStore.terminalTabIDs`, never `openTabIDs`**.
+`resolveLaunch` refuses a non-terminal tab outright, so a launch is structurally
+impossible even if a future caller forgets the filter.
+
+**Each strip owns its own selection.** `activeTabID` is the CONSOLE strip's (the name and
+the JSON key predate this, and half the app reads it) and is guaranteed to name a
+terminal tab; `activeDocumentTabID` is the Documents strip's. Clicking a document must
+never move `activeTabID` — that would unmount the console's terminal view.
+`focusedKind` tracks the strip you last picked a tab in and drives ⌘W, next/previous
+and ⌘1–9.
+
+**Contiguity is PER STRIP, and lives in `TabStripModel`** — a pure value type over ids,
+deliberately outside `SessionStore` so a harness can reach it (Phase A's third bug was a
+sizing rule that lived only in the store, which is why nothing caught it). `openTabIDs`
+stays one flat list holding both kinds; a strip is that list filtered to its kind, and a
+reorder writes back only into the slots that kind already held — so a reorder in one
+strip *cannot* move a tab in the other. A group is a contiguous run WITHIN a strip, which
+is as strong as the invariant can be once a parent in the console strip has children in
+the document strip. Contiguity is tested as "every member of the group occupies
+consecutive positions", NOT "is the moved tab inside the run starting at its parent":
+with no in-strip parent to anchor to, that older scan found a dragged tab at the head of
+its own one-tab run and called the group intact while its sibling sat stranded.
+
+**Closing a console tab that parented DOCUMENT children prompts** (`requestCloseTab` →
+`pendingClose` → the dialog in `ContentView`) rather than silently orphaning them.
+Terminal worktree-tab grouping is deliberately unchanged: console children of a closing
+console tab still orphan silently. Non-interactive closes — the CLI's `--close-self`, a
+process exit — call `closeTab` directly and never prompt.
+
+The Documents section is a **read-only viewer** by decision, not omission (Tadd,
+2026-08-12). Its `layout.json` key stays `editor` — renaming a persistence key to track a
+scope decision would orphan every saved layout — but its user-facing name says what it
+does. No save path, no dirty state, no file watcher; the toolbar's Reload is how an
+external change is picked up.
 
 ## Key Design Decisions
 - Terminal views are kept alive in a ZStack (hidden via AppKit isHidden) to preserve running processes when switching tabs

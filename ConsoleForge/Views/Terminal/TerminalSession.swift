@@ -27,9 +27,19 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
     private var fullScreenEnterObserver: NSObjectProtocol?
     private var fullScreenExitObserver: NSObjectProtocol?
 
+    /// This session was launched with `--resume`, so the child replays the WHOLE prior
+    /// transcript into a view that is mounting and taking its first paint at the same
+    /// time. See `scheduleResumeSettle`.
+    private let didResume: Bool
+    /// One-shot: the post-flood recovery runs once per session and never again, so it
+    /// can never become a repaint loop driven by ordinary output.
+    private var resumeSettleDone = false
+    private var resumeSettleTask: Task<Void, Never>?
+
     init(sessionID: UUID, configuration: SessionConfiguration, resume: Bool = false,
          initialSize: CGSize = CGSize(width: 800, height: 600)) {
         self.sessionID = sessionID
+        self.didResume = resume
         // Birth the view at the REAL terminal-area size, never a placeholder. A
         // session created at a stale size (e.g. an 800×600 default) and only resized
         // to the real area on first mount forces SwiftTerm to reflow whatever already
@@ -85,6 +95,7 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
                     if hasBell {
                         self?.onBellReceived?()
                     }
+                    self?.scheduleResumeSettle()
                 }
             }
 
@@ -185,9 +196,53 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         process?.jiggleWindowSize()
     }
 
+    /// Recover the ONE case the existing repaint hooks miss: a `--resume`d session on
+    /// launch.
+    ///
+    /// Every other stale-surface path is already covered — `mount()` repaints when a tab
+    /// is switched to, and the wake / display-change / fullscreen observers cover the
+    /// rest. What none of them cover is the first tab after a relaunch: it is the tab
+    /// that is MOUNTED, so it is drawing while the child replays an entire transcript
+    /// into it, and nothing repaints it once that flood stops. Detached siblings are not
+    /// drawing, and they get a clean repaint from `mount()` whenever you switch to them —
+    /// which is why only the first tab shows it.
+    ///
+    /// Not a geometry bug: the launch trace shows the size settling BEFORE any session
+    /// exists (`applied … sessions=0`), the session born at that settled size, and no
+    /// reflow afterwards. And resizing the window RECOVERED it, which a corrupted buffer
+    /// model cannot do — a wrong-width reflow is rewritten, not re-rendered (tasks 9543 /
+    /// 9487). Both halves of what a resize delivers are needed, which is why one resize
+    /// was not always enough: repaint OUR surface from the buffer model, and make the
+    /// CHILD regenerate its own live region. That pair is exactly `resync`'s recovery,
+    /// reused here rather than reinvented.
+    ///
+    /// Triggered off the output itself rather than a fixed delay: the flood is continuous
+    /// and then stops, so "output has been quiet for a beat" is the real signal that the
+    /// replay is done. Adds no frame writer — `forceFullRepaint` redraws from the buffer
+    /// model and `forceRedraw` jiggles the PTY winsize; neither touches the view's frame.
+    private func scheduleResumeSettle() {
+        guard didResume, !resumeSettleDone else { return }
+        resumeSettleTask?.cancel()
+        resumeSettleTask = Task { [weak self] in
+            do { try await Task.sleep(for: Self.resumeSettleDelay) } catch { return }
+            guard let self, !self.resumeSettleDone else { return }
+            self.resumeSettleDone = true
+            self.resumeSettleTask = nil
+            self.forceFullRepaint()
+            self.forceRedraw()
+        }
+    }
+
+    /// How long output must be quiet before the replay counts as finished. Long enough
+    /// not to fire between chunks of a big transcript, short enough that a stale first
+    /// paint is not something you sit looking at.
+    private static let resumeSettleDelay: Duration = .milliseconds(600)
+
     /// Tear down the session permanently: stop the display link, remove observers,
     /// and terminate the backing process.
     func shutdown() {
+        resumeSettleTask?.cancel()
+        resumeSettleTask = nil
         displayLink?.invalidate()
         displayLink = nil
         removeRepaintObservers()

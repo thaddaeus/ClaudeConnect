@@ -24,7 +24,7 @@ struct TerminalTabBar: View {
     private var tabStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(store.openTabIDs, id: \.self) { sessionID in
+                ForEach(store.terminalTabIDs, id: \.self) { sessionID in
                     if let session = store.session(for: sessionID) {
                         tabButton(session: session, isActive: store.activeTabID == sessionID)
                             .onDrag {
@@ -74,31 +74,51 @@ struct TerminalTabBar: View {
         return parent.tabColor
     }
 
-    /// Whether the active tab is a grouped child of `session` — the parent's
-    /// trailing edge dims so the focused child reads as sitting in front.
+    /// The group this tab belongs to, for the background wash: the colour to paint and
+    /// the tab that anchors the group.
+    ///
+    /// A PARENT is washed as well as its children, in its own colour — which is the
+    /// group's colour — so the run reads as one block rather than a plain tab followed by
+    /// tinted ones. Children count across BOTH strips, so a console tab that owns nothing
+    /// but documents still shows it owns something.
+    private func groupWash(for session: SessionConfiguration) -> (color: Color, anchor: UUID)? {
+        if let pid = session.parentTabID, store.openTabIDs.contains(pid),
+           let parent = store.session(for: pid) {
+            return (parent.tabColor, pid)
+        }
+        return store.childTabs(of: session.id).isEmpty ? nil : (session.tabColor, session.id)
+    }
+
+    /// Whether the focused tab is a grouped child of `session` — the parent's
+    /// trailing edge dims so the focused child reads as sitting in front. Follows the
+    /// FOCUSED tab across both strips, so a console tab whose document child was just
+    /// clicked shows the same relationship a console child would.
     private func isParentOfActiveTab(_ session: SessionConfiguration) -> Bool {
-        guard let activeID = store.activeTabID, activeID != session.id,
-              let active = store.session(for: activeID) else { return false }
-        return active.parentTabID == session.id
+        guard let focusedID = store.focusedTabID, focusedID != session.id,
+              let focused = store.session(for: focusedID) else { return false }
+        return focused.parentTabID == session.id
     }
 
     /// Whether the active tab belongs to the group anchored at `parentID` —
     /// the parent itself or one of its grouped children. When focus leaves the
     /// group, its colors dim like any other inactive tab.
     private func groupHasFocus(parentID: UUID) -> Bool {
-        guard let activeID = store.activeTabID else { return false }
-        if activeID == parentID { return true }
-        return store.session(for: activeID)?.parentTabID == parentID
+        guard let focusedID = store.focusedTabID else { return false }
+        if focusedID == parentID { return true }
+        return store.session(for: focusedID)?.parentTabID == parentID
     }
 
     /// Whether `session` is the last member of its group in tab order — the next
     /// tab is neither its parent nor a sibling child of the same parent.
     private func isLastInGroup(_ session: SessionConfiguration) -> Bool {
+        // Adjacency is a per-STRIP question now: the tab after this one in the console
+        // strip, not in the flat open-tab list.
+        let strip = store.terminalTabIDs
         guard let pid = session.parentTabID,
-              let idx = store.openTabIDs.firstIndex(of: session.id) else { return false }
+              let idx = strip.firstIndex(of: session.id) else { return false }
         let nextIdx = idx + 1
-        guard nextIdx < store.openTabIDs.count else { return true }
-        let nextID = store.openTabIDs[nextIdx]
+        guard nextIdx < strip.count else { return true }
+        let nextID = strip[nextIdx]
         if nextID == pid { return false }
         if let next = store.session(for: nextID), next.parentTabID == pid { return false }
         return true
@@ -110,6 +130,7 @@ struct TerminalTabBar: View {
         let parentColor = groupParentColor(for: session)
         let capsGroup = parentColor != nil && isLastInGroup(session)
         let yieldsToChild = isParentOfActiveTab(session)
+        let wash = groupWash(for: session)
         return HStack(spacing: 6) {
             Circle()
                 .fill(activity.statusDotColor)
@@ -124,7 +145,7 @@ struct TerminalTabBar: View {
                 .lineLimit(1)
 
             Button {
-                store.closeTab(sessionID: session.id)
+                store.requestCloseTab(sessionID: session.id)
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
@@ -137,11 +158,21 @@ struct TerminalTabBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(
-            isActive
-                ? Color(nsColor: .selectedControlColor).opacity(0.3)
-                : (isHovered ? Color.primary.opacity(0.06) : .clear)
-        )
+        .background {
+            // The group's colour washes the whole tab, under the selection and hover
+            // layers. Same treatment, same numbers, as the Documents strip.
+            ZStack {
+                if let wash {
+                    wash.color.opacity(TabGroupWash.opacity(
+                        isActive: isActive, hasFocus: groupHasFocus(parentID: wash.anchor)))
+                }
+                if isActive {
+                    Color(nsColor: .selectedControlColor).opacity(0.3)
+                } else if isHovered {
+                    Color.primary.opacity(0.06)
+                }
+            }
+        }
         .overlay(alignment: .leading) {
             if dropTargetTabID == session.id {
                 Rectangle()
@@ -197,6 +228,15 @@ struct TerminalTabBar: View {
             store.switchToTab(sessionID: session.id)
         }
         .contextMenu {
+            Button {
+                store.openChildTab(of: session.id)
+            } label: {
+                Label(session.parentTabID == nil ? "New Tab in This Group" : "New Tab in Group",
+                      systemImage: "plus.rectangle.on.rectangle")
+            }
+
+            Divider()
+
             if session.isEphemeral {
                 Button {
                     store.saveEphemeralSession(id: session.id)
@@ -208,11 +248,32 @@ struct TerminalTabBar: View {
             }
 
             Button(role: .destructive) {
-                store.closeTab(sessionID: session.id)
+                store.requestCloseTab(sessionID: session.id)
             } label: {
                 Label("Close Tab", systemImage: "xmark")
             }
         }
+    }
+}
+
+// MARK: - Tab group wash
+
+/// How strongly a tab is washed in its GROUP's colour — the parent's colour on a child,
+/// its own on a parent that has open children.
+///
+/// One definition for both strips. The console strip and the Documents strip render
+/// separately (activity dots and a voice toggle on one, a path and a missing-file glyph
+/// on the other), so the thing that has to stay identical between them is the colour
+/// language, and that is this.
+///
+/// Three levels, because the wash answers two questions at once — whose group this is,
+/// and whether that group is live. Bounded by contrast, not taste: these are saturated
+/// tab colours over a control background, and pushed much past a third the label starts
+/// to go soft in light mode.
+enum TabGroupWash {
+    static func opacity(isActive: Bool, hasFocus: Bool) -> Double {
+        if isActive { return 0.34 }
+        return hasFocus ? 0.24 : 0.13
     }
 }
 

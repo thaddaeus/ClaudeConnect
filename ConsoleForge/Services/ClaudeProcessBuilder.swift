@@ -181,18 +181,34 @@ struct ClaudeProcessBuilder {
         let command = parts.joined(separator: " ")
 
         // Inject ConsoleForge env vars so tabs can identify themselves.
-        var inherited = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        //
+        // BUILT AS A DICTIONARY, NOT AN APPENDED ARRAY. These vars are already in the
+        // app's own environment whenever the app was launched from inside a ConsoleForge
+        // tab — which is exactly how `dev.sh` and `beta.sh` launch it. Appending to the
+        // inherited list then produced envp with the key TWICE, stale first and correct
+        // second, and the winner is decided by whoever re-imports the block: we spawn
+        // `zsh -l -c`, and zsh keeps the FIRST occurrence (sh keeps the last). So every
+        // session in a dev-launched app saw the LAUNCHING tab's identity instead of its
+        // own — tabs it spawned were parented to a tab in the other channel and silently
+        // came out ungrouped, and `--close-self` would have closed that other tab.
+        // A dictionary cannot hold the key twice, so the override is unconditional.
+        var childEnv = ProcessInfo.processInfo.environment
         // Tells `consoleforge-tab` which app to talk to. Without it the CLI
         // defaults to production, so a tab running inside beta would spawn its
         // tabs in the production window — `~/.local/bin/consoleforge-tab` comes
         // before the bundle's own copy on PATH, so the binary on disk can't be
         // what identifies the channel. The environment can.
-        inherited.append("CONSOLEFORGE_APP_SUPPORT=\(AppChannel.supportDirectory().path)")
+        childEnv["CONSOLEFORGE_APP_SUPPORT"] = AppChannel.supportDirectory().path
         if let tabID = tabID {
-            inherited.append("CONSOLEFORGE_TAB_ID=\(tabID.uuidString)")
-            inherited.append("CONSOLEFORGE_SESSION_NAME=\(config.name)")
+            childEnv["CONSOLEFORGE_TAB_ID"] = tabID.uuidString
+            childEnv["CONSOLEFORGE_SESSION_NAME"] = config.name
+        } else {
+            // No tab of our own is worse than wrong: inheriting someone else's id would
+            // let this process close or parent to a tab it has nothing to do with.
+            childEnv.removeValue(forKey: "CONSOLEFORGE_TAB_ID")
+            childEnv.removeValue(forKey: "CONSOLEFORGE_SESSION_NAME")
         }
-        let envVars: [String]? = inherited
+        let envVars: [String]? = childEnv.map { "\($0.key)=\($0.value)" }
 
         // Spawn the user's login shell which will resolve PATH and run claude
         // Using -l for login shell (loads .zprofile for PATH), -c for command
