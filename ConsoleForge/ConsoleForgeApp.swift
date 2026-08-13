@@ -307,18 +307,6 @@ struct ConsoleForgeApp: App {
             }
 
             CommandGroup(after: .newItem) {
-                Button(chrome.isRunning(store.activeTabID ?? UUID())
-                       ? "Close This Tab\u{2019}s Chrome" : "Open Chrome for This Tab") {
-                    guard let active = store.activeTabID else { return }
-                    if chrome.isRunning(active) {
-                        chrome.terminate(active)
-                    } else {
-                        chrome.open(tabID: active)
-                    }
-                }
-                .keyboardShortcut("b", modifiers: [.command, .option])
-                .disabled(store.activeTabID == nil || !chrome.isAvailable)
-
                 Button("Open Document\u{2026}") {
                     // Raise the strip first, so the panel's result lands somewhere the
                     // user can already see.
@@ -360,7 +348,7 @@ struct ConsoleForgeApp: App {
                 }
             }
 
-            LayoutCommands(layout: layoutStore)
+            LayoutCommands(layout: layoutStore, store: store, chrome: chrome)
 
             SupportCommands()
         }

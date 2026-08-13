@@ -273,6 +273,12 @@ struct SlotGapMenu: View {
 /// only open section (in which case no headers are drawn).
 struct LayoutCommands: Commands {
     let layout: LayoutStore
+    let store: SessionStore
+    let chrome: ManagedChrome
+
+    private var chromeIsRunning: Bool {
+        store.activeTabID.map { chrome.isRunning($0) } ?? false
+    }
 
     var body: some Commands {
         CommandMenu("Layout") {
@@ -280,6 +286,19 @@ struct LayoutCommands: Commands {
                 layout.toggle(.browser)
             }
             .keyboardShortcut("b", modifiers: [.command, .shift])
+
+            // Chrome belongs HERE, beside the other browser, even though it is not a
+            // slot section — it was under File, which is nowhere anyone would look for
+            // a browser when Safari, Web Output and Documents are all in this menu.
+            // Worded per-tab rather than Show/Hide because that is the whole point of
+            // it: the window belongs to a tab and dies with it.
+            Button(chromeIsRunning ? "Close This Tab’s Chrome" : "Open Chrome for This Tab") {
+                guard let active = store.activeTabID else { return }
+                if chrome.isRunning(active) { chrome.terminate(active) }
+                else { chrome.open(tabID: active) }
+            }
+            .keyboardShortcut("b", modifiers: [.command, .option])
+            .disabled(store.activeTabID == nil || !chrome.isAvailable)
 
             Button(layout.isOpen(.webConsole) ? "Hide Web Output" : "Show Web Output") {
                 layout.toggle(.webConsole)

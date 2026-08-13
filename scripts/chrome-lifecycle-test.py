@@ -91,16 +91,49 @@ def meta_for(tab_id):
     except Exception: return None
 
 
-def menu_click(item):
+def menu_click(item, menu="Layout"):
+    # Layout, not File: the Chrome command lives beside Safari, Web Output and Documents,
+    # which is where anyone looks for a browser.
     return osa(f'tell application "System Events" to tell process "{APP}" to '
-               f'click menu item "{item}" of menu 1 of menu bar item "File" of menu bar 1')
+               f'click menu item "{item}" of menu 1 of menu bar item "{menu}" of menu bar 1')
 
 
-def open_chrome_for_active():
+def active_tab_id():
+    try:
+        d = json.load(open(os.path.join(SUPPORT, "sessions.json")))
+        return (d.get("activeTabID") or "").upper()
+    except Exception:
+        return ""
+
+
+def open_chrome_for_active(expect_tab=None):
+    """The menu acts on the ACTIVE tab, so the test has to prove which tab that is.
+
+    Skipping that check once cost a confusing failure: a stale close-by-name command,
+    issued while the app was down and replayed at its next launch, closed the tab this
+    had just created — so Chrome opened for a DIFFERENT tab and the only symptom was
+    `pid=None` three checks later.
+    """
     osa(f'tell application "{APP}" to activate'); time.sleep(1.2)
+    if expect_tab and active_tab_id() != expect_tab.upper():
+        print(f"  precondition FAILED: active tab is {active_tab_id()[:8]}, expected {expect_tab[:8]}")
+        return False
     err = menu_click("Open Chrome for This Tab")
-    time.sleep(6)
+    time.sleep(7)
     return not err.startswith("ERR")
+
+
+def drain_commands():
+    """Discard queued CLI commands before starting.
+
+    The commands bus is fire-and-forget: anything written while the app is down is
+    replayed at its next launch. A leftover "close ChromeTest C" from an earlier run
+    will therefore close this run's tab, seconds after it is created.
+    """
+    d = os.path.join(SUPPORT, "commands")
+    for f in os.listdir(d) if os.path.isdir(d) else []:
+        try: os.remove(os.path.join(d, f))
+        except OSError: pass
 
 
 def wait_gone(pid, timeout=12):
@@ -117,7 +150,7 @@ def test_launch_and_close_tab():
     if not app_running(): launch_app()
     tab = new_tab("ChromeTest A")
     if not check("throwaway tab created", bool(tab), tab or "no tab id"): return
-    if not check("menu item fired", open_chrome_for_active()): return
+    if not check("menu item fired", open_chrome_for_active(tab)): return
 
     pid = chrome_pid_for(tab)
     check("Chrome running against THIS tab's profile", pid is not None, f"pid={pid}")
@@ -149,7 +182,7 @@ def test_app_quit():
     print("\n3. QUITTING THE APP terminates it")
     tab = new_tab("ChromeTest B")
     if not check("tab created", bool(tab)): return
-    if not check("menu item fired", open_chrome_for_active()): return
+    if not check("menu item fired", open_chrome_for_active(tab)): return
     pid = chrome_pid_for(tab)
     if not check("Chrome running", pid is not None, f"pid={pid}"): return
 
@@ -165,7 +198,7 @@ def test_orphan_reaping():
     if not app_running(): launch_app()
     tab = new_tab("ChromeTest C")
     if not check("tab created", bool(tab)): return
-    if not check("menu item fired", open_chrome_for_active()): return
+    if not check("menu item fired", open_chrome_for_active(tab)): return
     pid = chrome_pid_for(tab)
     if not check("Chrome running", pid is not None, f"pid={pid}"): return
 
@@ -183,6 +216,9 @@ def test_orphan_reaping():
 
 
 def close_leftover(tab):
+    # Never issue closes while the app is down — they would queue and fire against the
+    # NEXT run's tabs.
+    if not app_running(): launch_app()
     for name in ("ChromeTest A", "ChromeTest B", "ChromeTest C"):
         close_tab(name)
     pid = chrome_pid_for(tab) if tab else None
@@ -194,6 +230,7 @@ def close_leftover(tab):
 if __name__ == "__main__":
     if not os.path.exists(f"/Applications/{APP}.app"):
         sys.exit(f"{APP} not installed — run ./scripts/beta.sh first")
+    drain_commands()
     test_launch_and_close_tab()
     test_app_quit()
     test_orphan_reaping()
