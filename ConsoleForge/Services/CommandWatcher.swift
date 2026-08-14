@@ -21,6 +21,8 @@ struct TabCommand: Codable {
     var tabID: String?
     /// Page to load for the `browser-window` action.
     var url: String?
+    /// `--browser`: give the spawned tab its own managed browser.
+    var usesManagedBrowser: Bool?
 }
 
 class CommandWatcher {

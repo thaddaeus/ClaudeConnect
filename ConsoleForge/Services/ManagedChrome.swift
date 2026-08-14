@@ -152,6 +152,20 @@ final class ManagedChrome {
             "--no-first-run",
             "--no-default-browser-check",
             "--no-service-autorun",
+            // Local Network Access, on by default in Chrome 138+, gates a page's access to
+            // LAN and VPN addresses behind a per-site grant. Every managed browser starts
+            // on a FRESH --user-data-dir, so nothing the user allowed in their everyday
+            // Chrome carries over and each new one begins gated — which is why a dev
+            // server that resolves fine elsewhere fails here. The sub-checks are listed
+            // explicitly because disabling the umbrella does not cover the WebSocket,
+            // WebTransport and WebRTC paths, and a dev server reached over a socket would
+            // still have failed.
+            //
+            // Scoped and deliberate: these profiles exist to reach the user's own
+            // development machines, they are isolated per tab, and they are thrown away
+            // with the tab. This is NOT applied to any browser the user already had.
+            "--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessChecksWebSockets," +
+            "LocalNetworkAccessChecksWebTransport,LocalNetworkAccessChecksWebRTC",
         ]
         if mode == .headless {
             // The point of the mode: no window is ever created, so nothing can take focus
@@ -200,6 +214,65 @@ final class ManagedChrome {
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         try? p.run()
+    }
+
+    // MARK: - Wiring a session to its own browser
+
+    /// Where a tab's private MCP config lives.
+    static func mcpConfigURL(for tabID: UUID) -> URL {
+        metadataDirectory.appendingPathComponent("\(tabID.uuidString)-mcp.json")
+    }
+
+    /// Write the per-tab MCP config. Starts NOTHING.
+    ///
+    /// The config names a wrapper script rather than a port, so the browser is started on
+    /// FIRST USE instead of at session launch. A headless Chrome is 100-200MB; one per tab
+    /// at launch is fine for four tabs and indefensible for the fifteen a real day
+    /// involves. Claude Code starts an MCP server lazily, the first time one of its tools
+    /// is called, so the wrapper runs exactly when a browser is actually wanted — see
+    /// scripts/consoleforge-chrome-mcp.
+    ///
+    /// The server is deliberately named `chrome-devtools`, the same as the global entry,
+    /// so it SHADOWS it for this session rather than adding a second one.
+    ///
+    /// Returns the config path for `claude --mcp-config`, or nil if Chrome is not
+    /// installed or the wrapper is missing — in which case the session launches exactly
+    /// as it always did.
+    func writeSessionMCPConfig(tabID: UUID) -> String? {
+        guard Self.binary != nil, let wrapper = Self.wrapperPath else { return nil }
+        let config: [String: Any] = [
+            "mcpServers": [
+                "chrome-devtools": [
+                    "type": "stdio",
+                    "command": wrapper,
+                    "args": [String](),
+                ]
+            ]
+        ]
+        let url = Self.mcpConfigURL(for: tabID)
+        try? FileManager.default.createDirectory(at: Self.metadataDirectory,
+                                                 withIntermediateDirectories: true)
+        guard let data = try? JSONSerialization.data(withJSONObject: config,
+                                                     options: [.prettyPrinted, .sortedKeys]),
+              (try? data.write(to: url, options: .atomic)) != nil else { return nil }
+        return url.path
+    }
+
+    /// The wrapper ships in the app bundle; the repo copy is the fallback for `swift run`.
+    static let wrapperPath: String? = {
+        var candidates: [String] = []
+        if let res = Bundle.main.resourcePath {
+            candidates.append(res + "/consoleforge-chrome-mcp")
+        }
+        candidates.append(FileManager.default.currentDirectoryPath + "/scripts/consoleforge-chrome-mcp")
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }()
+
+    /// Start the headless browser if it is not already up. Called when the wrapper asks,
+    /// i.e. the moment a session first reaches for a browser.
+    func ensureHeadless(tabID: UUID) {
+        guard !isRunning(tabID, .headless) else { return }
+        open(tabID: tabID, mode: .headless)
     }
 
     // MARK: - Terminate
@@ -253,6 +326,9 @@ final class ManagedChrome {
         processes.removeValue(forKey: key)
         instances.removeValue(forKey: key)
         writeMetadata(for: key.tabID)
+        if !Mode.allCases.contains(where: { instances[Key(tabID: key.tabID, mode: $0)] != nil }) {
+            try? FileManager.default.removeItem(at: Self.mcpConfigURL(for: key.tabID))
+        }
     }
 
     // MARK: - Orphans

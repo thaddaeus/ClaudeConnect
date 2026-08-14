@@ -32,6 +32,15 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     /// tab continues ITS OWN conversation instead of "the most recent in this
     /// directory" (`--continue`) — which would interleave tabs sharing a cwd.
     var claudeSessionID: UUID?
+    /// Give this tab its OWN managed browser, which its agent drives through the
+    /// chrome-devtools MCP instead of letting that MCP launch a headed Chrome of its own.
+    ///
+    /// OFF by default, and that default is the whole point: a headless Chrome costs
+    /// 100-200MB and Claude Code starts MCP servers when a session starts, not on first
+    /// tool use — so "every tab gets one" is 1.5-3GB across a real day's tabs. Set it
+    /// where the decision is actually known: a hub spawning a worktree knows whether that
+    /// worktree does web work (`consoleforge-tab --browser`).
+    var usesManagedBrowser: Bool = false
     /// Terminal (a PTY) or document (a file). Defaults to `.terminal` so every session
     /// written before Phase B decodes unchanged. See `ViewKind`.
     var viewKind: ViewKind = .terminal
@@ -66,6 +75,7 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
         parentTabID = try c.decodeIfPresent(UUID.self, forKey: .parentTabID)
         claudeSessionID = try c.decodeIfPresent(UUID.self, forKey: .claudeSessionID)
         // Absent on every session written before Phase B — and those are all terminals.
+        usesManagedBrowser = try c.decodeIfPresent(Bool.self, forKey: .usesManagedBrowser) ?? false
         viewKind = try c.decodeIfPresent(ViewKind.self, forKey: .viewKind) ?? .terminal
         documentPath = try c.decodeIfPresent(String.self, forKey: .documentPath)
     }

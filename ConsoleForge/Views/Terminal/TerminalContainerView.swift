@@ -136,7 +136,24 @@ struct TerminalContainerView: View {
             // CONSOLE STRIP ONLY. A document tab has no PTY and must never reach
             // TerminalSession / ClaudeProcessBuilder (task 9736 criterion 11).
             openIDs: store.terminalTabIDs,
-            resolveLaunch: { id in store.resolveLaunch(for: id) },
+            // Every terminal session launches with its OWN MCP config, so the browser
+            // it reaches for is the one this tab owns rather than a headed Chrome
+            // chrome-devtools-mcp launches for itself — the window that kept appearing
+            // unasked. NOTHING starts here: the config names a wrapper that starts the
+            // browser on first use, so an idle tab costs nothing.
+            resolveLaunch: { id in
+                guard var launch = store.resolveLaunch(for: id) else { return nil }
+                // Opt-in only. Without this every tab gets a browser at session start —
+                // MCP servers are started with the session, not on first tool use — which
+                // is 100-200MB per tab for something most tabs never touch.
+                // Never override a config the user set themselves.
+                if launch.config.usesManagedBrowser,
+                   launch.config.mcpConfigPath?.isEmpty ?? true,
+                   let path = ManagedChrome.shared.writeSessionMCPConfig(tabID: id) {
+                    launch.config.mcpConfigPath = path
+                }
+                return launch
+            },
             onOutput: { id in
                 activityTracker.didReceiveOutput(
                     tabID: id,

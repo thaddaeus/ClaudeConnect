@@ -83,6 +83,8 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$SCRIPT_DIR/consoleforge-tab" "$APP_BUNDLE/Contents/Resources/consoleforge-tab"
+cp "$SCRIPT_DIR/consoleforge-chrome-mcp" "$APP_BUNDLE/Contents/Resources/consoleforge-chrome-mcp"
+chmod +x "$APP_BUNDLE/Contents/Resources/consoleforge-chrome-mcp"
 cp "$PROJECT_DIR/ConsoleForge/Assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 # Embed Sparkle.framework. The binary links @rpath/Sparkle.framework/... and
@@ -129,6 +131,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <!-- Voice input. Both strings are REQUIRED for the voice panel's mic: macOS
          kills the process on first access if either is missing. Transcription is
          on-device (SpeechAnalyzer, macOS 26+) — no audio leaves the machine. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ConsoleForge runs your sessions and their browsers, which reach development servers on your local network or over a VPN. Without this, those addresses are treated as remote and fail.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>ConsoleForge listens for your wake phrase so you can talk to a session instead of typing. Audio is transcribed on this Mac and never leaves it.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

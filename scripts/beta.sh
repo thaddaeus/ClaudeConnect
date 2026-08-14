@@ -127,6 +127,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BINARY" "$BETA_EXEC_PATH.new"
 mv -f "$BETA_EXEC_PATH.new" "$BETA_EXEC_PATH"
 cp "$PROJECT_DIR/scripts/consoleforge-tab" "$APP_BUNDLE/Contents/Resources/consoleforge-tab"
+cp "$PROJECT_DIR/scripts/consoleforge-chrome-mcp" "$APP_BUNDLE/Contents/Resources/consoleforge-chrome-mcp"
 # Tinted icon so beta is tellable from production at a glance in the Dock; falls
 # back to the production icon if the tinted one hasn't been generated.
 if [ -f "$PROJECT_DIR/ConsoleForge/Assets/AppIconBeta.icns" ]; then
@@ -182,6 +183,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ConsoleForge runs your sessions and their browsers, which reach development servers on your local network or over a VPN. Without this, those addresses are treated as remote and fail.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>ConsoleForge listens for your wake phrase so you can talk to a session instead of typing. Audio is transcribed on this Mac and never leaves it.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
