@@ -202,6 +202,46 @@ final class ManagedChrome {
         try? p.run()
     }
 
+    // MARK: - Wiring a session to its own browser
+
+    /// Where a tab's private MCP config lives.
+    static func mcpConfigURL(for tabID: UUID) -> URL {
+        metadataDirectory.appendingPathComponent("\(tabID.uuidString)-mcp.json")
+    }
+
+    /// Start this tab's headless browser (if it is not already up) and write an MCP
+    /// config that points `chrome-devtools` at it.
+    ///
+    /// THIS is what makes the managed browser the one a session actually uses. Without
+    /// it the tab owned a browser that nothing pointed at, while the MCP went on
+    /// spawning its own headed Chrome — which is the window that kept appearing.
+    ///
+    /// The server is deliberately named `chrome-devtools`, the same as the global entry,
+    /// so it SHADOWS it for this session rather than adding a second one. `--browserUrl`
+    /// makes the MCP attach to a running browser instead of launching one, so there is
+    /// no second Chrome and nothing to pop up.
+    ///
+    /// Returns the config path to hand to `claude --mcp-config`, or nil if Chrome is not
+    /// installed — in which case the session simply launches as it always did.
+    func prepareSessionBrowser(tabID: UUID) -> String? {
+        guard let instance = open(tabID: tabID, mode: .headless) else { return nil }
+        let config: [String: Any] = [
+            "mcpServers": [
+                "chrome-devtools": [
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "chrome-devtools-mcp@latest",
+                             "--browserUrl", "http://127.0.0.1:\(instance.port)"],
+                ]
+            ]
+        ]
+        let url = Self.mcpConfigURL(for: tabID)
+        guard let data = try? JSONSerialization.data(withJSONObject: config,
+                                                     options: [.prettyPrinted, .sortedKeys]),
+              (try? data.write(to: url, options: .atomic)) != nil else { return nil }
+        return url.path
+    }
+
     // MARK: - Terminate
 
     /// Criterion 14's second half. SIGTERM first so Chrome writes its profile out
@@ -253,6 +293,9 @@ final class ManagedChrome {
         processes.removeValue(forKey: key)
         instances.removeValue(forKey: key)
         writeMetadata(for: key.tabID)
+        if !Mode.allCases.contains(where: { instances[Key(tabID: key.tabID, mode: $0)] != nil }) {
+            try? FileManager.default.removeItem(at: Self.mcpConfigURL(for: key.tabID))
+        }
     }
 
     // MARK: - Orphans
