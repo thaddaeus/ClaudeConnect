@@ -47,6 +47,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // A child process is NOT killed by its parent exiting — it is reparented to
+        // launchd and keeps running. Without this, quitting ConsoleForge would strand
+        // every managed Chrome, and "the browser dies with the tab" would be true only
+        // while the app happened to be alive. Synchronous: there is no run loop left to
+        // await a grace period on.
+        MainActor.assumeIsolated { ManagedChrome.shared.terminateAllNow() }
         if let token = activityToken {
             ProcessInfo.processInfo.endActivity(token)
             activityToken = nil
@@ -137,6 +143,9 @@ struct ConsoleForgeApp: App {
     /// The window's slot layout (which section sits where, and how each slot sizes
     /// itself). Held at app scope so the menu-bar Layout menu can drive it too.
     @State private var layoutStore = LayoutStore()
+    /// Chrome instances owned by tabs (Phase C). A singleton because the app delegate
+    /// has to reach it at terminate, and there is exactly one per app.
+    @State private var chrome = ManagedChrome.shared
     @State private var voice = VoiceController()
     @State private var commandWatcher = CommandWatcher()
     @State private var companionSettings: CompanionSettings
@@ -174,6 +183,7 @@ struct ConsoleForgeApp: App {
                 .environment(activityTracker)
                 .environment(terminalManager)
                 .environment(layoutStore)
+                .environment(chrome)
                 .environment(voice)
                 .environment(companionAuth)
                 .environment(supportReporter)
@@ -197,7 +207,18 @@ struct ConsoleForgeApp: App {
                     // by one wire.
                     store.onTabClosed = { tabID in
                         activityTracker.removeTab(tabID: tabID)
+                        // Criterion 14's second half. Every close path funnels through
+                        // store.closeTab, so this one wire covers the tab bar, the menu,
+                        // the CLI and a process exit.
+                        ManagedChrome.shared.terminate(tabID)
                     }
+
+                    // Chromes stranded by a previous run (force-quit, crash) are killed
+                    // here — see ManagedChrome.reapOrphans.
+                    ManagedChrome.shared.reapOrphans()
+                    // …and reclaim profile directories whose session is gone entirely.
+                    ManagedChrome.shared.pruneProfiles(
+                        knownSessionIDs: Set(store.sessions.map(\.id)))
 
                     // The voice channel follows the ACTIVE tab: what you hear is what
                     // you're looking at. Resolving it through a closure keeps
@@ -327,7 +348,7 @@ struct ConsoleForgeApp: App {
                 }
             }
 
-            LayoutCommands(layout: layoutStore)
+            LayoutCommands(layout: layoutStore, store: store, chrome: chrome)
 
             SupportCommands()
         }
@@ -374,6 +395,8 @@ struct ConsoleForgeApp: App {
         switch command.action {
         case "close-tab":
             handleCloseTab(command)
+        case "browser-window":
+            handleBrowserWindow(command)
         default:
             handleOpenTab(command)
         }
@@ -412,6 +435,16 @@ struct ConsoleForgeApp: App {
 
         // Bring ConsoleForge to the front
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// A session asking for a real browser WINDOW — the one thing it cannot do for
+    /// itself. Its own browser is headless by design, so when it hits a sign-in wall, or
+    /// wants a human to look at something, this is how it produces something to look at.
+    /// Owned by the requesting tab like any other, so it still dies with it.
+    private func handleBrowserWindow(_ command: TabCommand) {
+        guard let idString = command.tabID, let tabID = UUID(uuidString: idString),
+              store.openTabIDs.contains(tabID) else { return }
+        chrome.open(tabID: tabID, mode: .windowed, url: command.url ?? "about:blank")
     }
 
     private func handleCloseTab(_ command: TabCommand) {

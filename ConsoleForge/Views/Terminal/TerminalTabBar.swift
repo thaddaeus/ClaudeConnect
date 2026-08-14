@@ -5,6 +5,7 @@ struct TerminalTabBar: View {
     @Environment(SessionStore.self) private var store
     @Environment(TabActivityTracker.self) private var activityTracker
     @Environment(VoiceController.self) private var voice
+    @Environment(ManagedChrome.self) private var chrome
     @State private var hoveredTabID: UUID?
     @State private var draggingTabID: UUID?
     @State private var dropTargetTabID: UUID?
@@ -140,6 +141,19 @@ struct TerminalTabBar: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
+            // This tab owns a browser. Lit for a WINDOW you could go and look at,
+            // muted for the headless one — which has nothing to look at by design, but
+            // is still consuming memory and still dies with the tab, so it is worth
+            // being able to see that it exists.
+            if chrome.isRunning(session.id) {
+                let windowed = chrome.isRunning(session.id, .windowed)
+                Image(systemName: windowed ? "globe" : "bolt.horizontal.circle")
+                    .font(.system(size: 9))
+                    .foregroundStyle(windowed ? Color.accentColor : Color.secondary)
+                    .help(chrome.modes(for: session.id).map(\.title).joined(separator: " + ")
+                          + " — closes with the tab")
+            }
+
             Text(session.name)
                 .font(.system(size: 12))
                 .lineLimit(1)
@@ -244,6 +258,39 @@ struct TerminalTabBar: View {
                     Label("Save to Sidebar", systemImage: "square.and.arrow.down")
                 }
 
+                Divider()
+            }
+
+            if chrome.isAvailable {
+                // The window: yours. Opening it a second time raises the existing one
+                // rather than starting another.
+                Button {
+                    chrome.open(tabID: session.id, mode: .windowed)
+                } label: {
+                    Label(chrome.isRunning(session.id, .windowed)
+                          ? "Focus Browser Window" : "Open Browser Window", systemImage: "globe")
+                }
+                if chrome.isRunning(session.id, .windowed) {
+                    Button {
+                        chrome.terminate(session.id, .windowed)
+                    } label: {
+                        Label("Close Browser Window", systemImage: "globe.badge.chevron.backward")
+                    }
+                }
+
+                // The headless one: the agent's. Never has a window, so it can never
+                // take focus while you are typing.
+                Button {
+                    if chrome.isRunning(session.id, .headless) {
+                        chrome.terminate(session.id, .headless)
+                    } else {
+                        chrome.open(tabID: session.id, mode: .headless)
+                    }
+                } label: {
+                    Label(chrome.isRunning(session.id, .headless)
+                          ? "Stop Agent Browser" : "Start Agent Browser",
+                          systemImage: "bolt.horizontal.circle")
+                }
                 Divider()
             }
 

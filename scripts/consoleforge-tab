@@ -32,6 +32,10 @@ Target app (all modes):
 
 Close options:
   --close-self             Close the tab this command runs in (reads CONSOLEFORGE_TAB_ID)
+  --browser-window [URL]   Open a real browser WINDOW owned by this tab (for a human to
+                           look at or sign in to). The agent's own browser is headless.
+  --browser-info           Print this tab's managed-browser ports as JSON, for pointing
+                           chrome-devtools-mcp --browserUrl at this tab's own browser
   --close                  Close a tab (requires --name)
   --name NAME              Name of the tab to close (with --close)
 
@@ -222,6 +226,39 @@ def main():
         # Exit with the tab's exit code if available
         exit_code = event.get("exitCode")
         sys.exit(exit_code if exit_code is not None else 0)
+
+    # Hand the human a real browser window, from inside a session.
+    #
+    # Deliberately the ONLY browser verb here. The agent already drives its own headless
+    # Chrome through the DevTools MCP; what it cannot do is produce a window for a person
+    # to look at or sign in to. General session->browser control (navigate, eval,
+    # screenshot) is IDEA Base task 9925 and belongs there, not in this script.
+    if "--browser-window" in args:
+        i = args.index("--browser-window")
+        url = args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("--") else "about:blank"
+        tab_id = os.environ.get("CONSOLEFORGE_TAB_ID")
+        if not tab_id:
+            print("Error: CONSOLEFORGE_TAB_ID not set. --browser-window only works inside a "
+                  "ConsoleForge tab.", file=sys.stderr)
+            sys.exit(1)
+        send_command({"action": "browser-window", "tabID": tab_id, "url": url})
+        print(f"Browser window requested: {url}")
+        return
+
+    # Print this tab's managed-browser ports, so a session can point
+    # `chrome-devtools-mcp --browserUrl` at ITS OWN browser rather than spawning another.
+    if "--browser-info" in args:
+        tab_id = os.environ.get("CONSOLEFORGE_TAB_ID")
+        if not tab_id:
+            print("Error: CONSOLEFORGE_TAB_ID not set.", file=sys.stderr)
+            sys.exit(1)
+        meta = os.path.join(os.path.dirname(COMMANDS_DIR), "chrome", f"{tab_id}.json")
+        if not os.path.exists(meta):
+            print("No managed browser running for this tab.")
+            sys.exit(1)
+        with open(meta) as fh:
+            print(fh.read())
+        return
 
     # Check for close modes
     if "--close-self" in args:

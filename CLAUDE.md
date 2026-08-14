@@ -286,6 +286,48 @@ scope decision would orphan every saved layout — but its user-facing name says
 does. No save path, no dirty state, no file watcher; the toolbar's Reload is how an
 external change is picked up.
 
+## Managed Chrome (Phase C)
+
+A tab owns **up to two** browsers, and which one you get is the whole design.
+
+| | profile | window | for |
+| --- | --- | --- | --- |
+| `.headless` | `chrome-profiles/<tabID>/headless` | never exists | the agent — testing, discovery, screenshots |
+| `.windowed` | `chrome-profiles/<tabID>/window` | on demand | you, reviewing or signing in |
+
+**Headless is the default because focus theft, not clutter, was the actual problem.** A
+Chrome window grabs focus when it launches and eats keystrokes being typed into another
+session. A headless browser has no window, so it cannot. It still renders for real —
+`Page.captureScreenshot` and the whole protocol work — so the agent loses nothing.
+
+**Soft attach, never a pixel embed.** Chrome is spawned as a **child process** (`Process`,
+launching the binary directly) rather than handed to `open`, which would detach it into
+launchd and leave nothing to terminate. Embedding would mean CEF: a second browser engine
+to keep patched, for a rectangle.
+
+**Two profiles, because two Chromes cannot share a `--user-data-dir`** (single-instance
+lock). That is a real seam: a login done in the window is invisible to the headless one.
+The resolution is that BOTH publish a debugging port, so after signing in the agent
+simply drives the windowed browser — no cookie copying, no swapping processes and losing
+page state. `…/chrome/<tabID>.json` lists every browser the tab owns with a `browserUrl`
+ready for `chrome-devtools-mcp --browserUrl`; `consoleforge-tab --browser-info` prints it.
+
+A session can call `consoleforge-tab --browser-window [URL]` to produce a window — the one
+thing it cannot do for itself, and what it needs when it hits a sign-in wall. That is
+deliberately the ONLY browser verb in the CLI: general session→browser control is task
+9925.
+
+Four teardown paths, all tested by `./scripts/chrome-lifecycle-test.py` (25 checks):
+closing the tab (both browsers), the CLI close path, quitting the app, and
+**force-killing** it — a child is NOT killed by its parent dying, so SIGKILL strands the
+browser under launchd. Each instance records its pid so `reapOrphans()` kills leftovers at
+next launch; a recorded pid is never trusted alone, since pids are recycled, so each is
+verified to still be a Chrome running against OUR profile first. Profiles are pruned when
+the SESSION is gone, not when the tab closes — a saved session keeps its logins.
+
+Note `~/.local/bin/consoleforge-tab` symlinks to the MAIN checkout, so CLI changes on a
+branch are invisible there until they merge; test a branch against `./scripts/consoleforge-tab`.
+
 ## Key Design Decisions
 - Terminal views are kept alive in a ZStack (hidden via AppKit isHidden) to preserve running processes when switching tabs
 - Sessions persist to `~/Library/Application Support/ConsoleForge/sessions.json`

@@ -273,6 +273,12 @@ struct SlotGapMenu: View {
 /// only open section (in which case no headers are drawn).
 struct LayoutCommands: Commands {
     let layout: LayoutStore
+    let store: SessionStore
+    let chrome: ManagedChrome
+
+    private var agentBrowserRunning: Bool {
+        store.activeTabID.map { chrome.isRunning($0, .headless) } ?? false
+    }
 
     var body: some Commands {
         CommandMenu("Layout") {
@@ -280,6 +286,24 @@ struct LayoutCommands: Commands {
                 layout.toggle(.browser)
             }
             .keyboardShortcut("b", modifiers: [.command, .shift])
+
+            // Chrome belongs HERE, beside the other browser, even though it is not a
+            // slot section. Two commands, not one, because the two browsers exist for
+            // different people: the window is for you, the headless one is for the agent
+            // and deliberately has nothing to look at.
+            Button("Open Browser Window") {
+                guard let active = store.activeTabID else { return }
+                chrome.open(tabID: active, mode: .windowed)
+            }
+            .keyboardShortcut("b", modifiers: [.command, .option])
+            .disabled(store.activeTabID == nil || !chrome.isAvailable)
+
+            Button(agentBrowserRunning ? "Stop Agent Browser" : "Start Agent Browser") {
+                guard let active = store.activeTabID else { return }
+                if chrome.isRunning(active, .headless) { chrome.terminate(active, .headless) }
+                else { chrome.open(tabID: active, mode: .headless) }
+            }
+            .disabled(store.activeTabID == nil || !chrome.isAvailable)
 
             Button(layout.isOpen(.webConsole) ? "Hide Web Output" : "Show Web Output") {
                 layout.toggle(.webConsole)

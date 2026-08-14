@@ -41,9 +41,22 @@ enum TerminalMetrics {
     }()
 
     /// Slack for SwiftTerm's own insets so the promised columns genuinely fit rather
-    /// than landing a cell short. Calibrated against real grids the trace recorded
-    /// (544px → 75 cols, 781px → 109 cols at a 7pt cell).
-    static let chrome: CGFloat = 16
+    /// than landing a cell short.
+    ///
+    /// 17, not 16. The original 16 was calibrated against two grids (544px → 75 cols,
+    /// 781px → 109 cols) and both happen to sit mid-cell, where a one-pixel error is
+    /// invisible. It only shows when `width - chrome` lands EXACTLY on a cell boundary:
+    /// at 744px, 744−16 = 728 = 7×104, so this reported 104 while SwiftTerm's real grid
+    /// was 103 — and likewise 583px → 81 against a real 80. Against all eight widths the
+    /// geometry trace has now recorded, 16 misses those two and 17 matches every one.
+    ///
+    /// The error direction mattered for the fix being safe to make: 17 reports FEWER
+    /// columns and makes `minimumWidth` one pixel WIDER, so both moves are conservative —
+    /// the arithmetic can only over-reserve space, never promise a terminal more columns
+    /// than it is about to get. Left wrong, the in-app HUD flags a container/grid
+    /// disagreement at those exact widths, which is a false alarm in the one instrument
+    /// that exists to catch the real thing.
+    static let chrome: CGFloat = 17
 
     /// Columns a terminal area of `width` points renders. Used for the live
     /// `cols × rows` readout while a slot splitter is being dragged — the only
