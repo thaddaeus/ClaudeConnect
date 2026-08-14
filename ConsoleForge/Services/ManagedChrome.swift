@@ -152,6 +152,20 @@ final class ManagedChrome {
             "--no-first-run",
             "--no-default-browser-check",
             "--no-service-autorun",
+            // Local Network Access, on by default in Chrome 138+, gates a page's access to
+            // LAN and VPN addresses behind a per-site grant. Every managed browser starts
+            // on a FRESH --user-data-dir, so nothing the user allowed in their everyday
+            // Chrome carries over and each new one begins gated — which is why a dev
+            // server that resolves fine elsewhere fails here. The sub-checks are listed
+            // explicitly because disabling the umbrella does not cover the WebSocket,
+            // WebTransport and WebRTC paths, and a dev server reached over a socket would
+            // still have failed.
+            //
+            // Scoped and deliberate: these profiles exist to reach the user's own
+            // development machines, they are isolated per tab, and they are thrown away
+            // with the tab. This is NOT applied to any browser the user already had.
+            "--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessChecksWebSockets," +
+            "LocalNetworkAccessChecksWebTransport,LocalNetworkAccessChecksWebRTC",
         ]
         if mode == .headless {
             // The point of the mode: no window is ever created, so nothing can take focus
@@ -200,6 +214,46 @@ final class ManagedChrome {
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         try? p.run()
+    }
+
+    // MARK: - Wiring a session to its own browser
+
+    /// Where a tab's private MCP config lives.
+    static func mcpConfigURL(for tabID: UUID) -> URL {
+        metadataDirectory.appendingPathComponent("\(tabID.uuidString)-mcp.json")
+    }
+
+    /// Start this tab's headless browser (if it is not already up) and write an MCP
+    /// config that points `chrome-devtools` at it.
+    ///
+    /// THIS is what makes the managed browser the one a session actually uses. Without
+    /// it the tab owned a browser that nothing pointed at, while the MCP went on
+    /// spawning its own headed Chrome — which is the window that kept appearing.
+    ///
+    /// The server is deliberately named `chrome-devtools`, the same as the global entry,
+    /// so it SHADOWS it for this session rather than adding a second one. `--browserUrl`
+    /// makes the MCP attach to a running browser instead of launching one, so there is
+    /// no second Chrome and nothing to pop up.
+    ///
+    /// Returns the config path to hand to `claude --mcp-config`, or nil if Chrome is not
+    /// installed — in which case the session simply launches as it always did.
+    func prepareSessionBrowser(tabID: UUID) -> String? {
+        guard let instance = open(tabID: tabID, mode: .headless) else { return nil }
+        let config: [String: Any] = [
+            "mcpServers": [
+                "chrome-devtools": [
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "chrome-devtools-mcp@latest",
+                             "--browserUrl", "http://127.0.0.1:\(instance.port)"],
+                ]
+            ]
+        ]
+        let url = Self.mcpConfigURL(for: tabID)
+        guard let data = try? JSONSerialization.data(withJSONObject: config,
+                                                     options: [.prettyPrinted, .sortedKeys]),
+              (try? data.write(to: url, options: .atomic)) != nil else { return nil }
+        return url.path
     }
 
     // MARK: - Terminate
@@ -253,6 +307,9 @@ final class ManagedChrome {
         processes.removeValue(forKey: key)
         instances.removeValue(forKey: key)
         writeMetadata(for: key.tabID)
+        if !Mode.allCases.contains(where: { instances[Key(tabID: key.tabID, mode: $0)] != nil }) {
+            try? FileManager.default.removeItem(at: Self.mcpConfigURL(for: key.tabID))
+        }
     }
 
     // MARK: - Orphans

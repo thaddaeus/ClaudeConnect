@@ -136,7 +136,23 @@ struct TerminalContainerView: View {
             // CONSOLE STRIP ONLY. A document tab has no PTY and must never reach
             // TerminalSession / ClaudeProcessBuilder (task 9736 criterion 11).
             openIDs: store.terminalTabIDs,
-            resolveLaunch: { id in store.resolveLaunch(for: id) },
+            // Every terminal session is launched with its OWN browser already running and
+            // its OWN MCP config pointing at it. This is the step that makes the managed
+            // browser the one the session actually uses: without it the tab owned a
+            // browser nothing pointed at, while chrome-devtools-mcp went on launching its
+            // own headed Chrome — the window that kept appearing unasked.
+            //
+            // Done here because the port has to exist BEFORE claude starts: the config
+            // naming that port is passed on the command line at launch.
+            resolveLaunch: { id in
+                guard var launch = store.resolveLaunch(for: id) else { return nil }
+                // Never override a config the user set themselves.
+                if launch.config.mcpConfigPath?.isEmpty ?? true,
+                   let path = ManagedChrome.shared.prepareSessionBrowser(tabID: id) {
+                    launch.config.mcpConfigPath = path
+                }
+                return launch
+            },
             onOutput: { id in
                 activityTracker.didReceiveOutput(
                     tabID: id,
