@@ -45,21 +45,34 @@ struct SidebarView: View {
             // Resign terminal first responder so text fields can receive input
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
+        // `.navigation` pins these to the LEADING edge, over the sidebar they act on.
+        // Left on the default placement SwiftUI hands them to the window's unified
+        // toolbar, which spreads across every pane — so New Folder drifted to the far
+        // right of the window, nowhere near the list it creates a folder in, and got
+        // worse with each pane added.
         .toolbar {
-            ToolbarItemGroup {
+            ToolbarItemGroup(placement: .navigation) {
                 Button {
                     let session = store.addSession()
                     store.editingSessionID = session.id
                     openWindow(id: "session-editor")
                 } label: {
-                    Label("New Session", systemImage: "plus")
+                    // Both glyphs are from the `badge.plus` family, which is the grammar
+                    // Apple uses for "create one of these" (Finder's New Folder is
+                    // literally folder.badge.plus). A bare `plus` said "add something"
+                    // without saying what, which is the same ambiguity as putting it in
+                    // the wrong place. There is no terminal.badge.plus, so a session —
+                    // which opens as its own working surface — takes the window glyph.
+                    Label("New Session", systemImage: "macwindow.badge.plus")
                 }
+                .help("New session — a saved configuration you launch as a tab (⌘N)")
 
                 Button {
                     showNewFolder = true
                 } label: {
                     Label("New Folder", systemImage: "folder.badge.plus")
                 }
+                .help("New folder — a group to organise sessions in (⇧⌘N)")
             }
         }
         .alert("New Folder", isPresented: $showNewFolder) {
