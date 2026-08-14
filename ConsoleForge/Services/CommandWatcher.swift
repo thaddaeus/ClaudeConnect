@@ -19,6 +19,8 @@ struct TabCommand: Codable {
     var parentTabID: String?
     /// Tab ID for close-tab action (matches CONSOLEFORGE_TAB_ID env var)
     var tabID: String?
+    /// Page to load for the `browser-window` action.
+    var url: String?
 }
 
 class CommandWatcher {

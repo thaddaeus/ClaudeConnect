@@ -27,19 +27,45 @@ import AppKit
 final class ManagedChrome {
     static let shared = ManagedChrome()
 
+    /// A tab can own TWO browsers, and which one you get is the whole design.
+    ///
+    /// `.headless` is the agent's workhorse: no window ever exists, so it cannot steal
+    /// focus mid-keystroke — which was the actual complaint, not visual clutter.
+    /// `.windowed` is materialised only when a human needs to look at something or sign
+    /// in, and takes focus because that is precisely what was asked for.
+    ///
+    /// They are SEPARATE PROFILES because two Chromes cannot share a `--user-data-dir`
+    /// (single-instance lock). That is a real seam: a login done in the window is not
+    /// visible to the headless one. The resolution is that both expose a debugging port,
+    /// so after signing in, the agent simply drives the windowed browser instead of
+    /// copying cookies between them or swapping processes and losing page state.
+    enum Mode: String, Codable, CaseIterable, Sendable {
+        case headless
+        case windowed
+
+        var title: String { self == .headless ? "Agent Browser" : "Browser Window" }
+        var profileComponent: String { self == .headless ? "headless" : "window" }
+    }
+
     struct Instance: Identifiable, Equatable {
         let tabID: UUID
+        let mode: Mode
         let pid: Int32
         let port: Int
         let profile: URL
         var url: String
         let startedAt: Date
-        var id: UUID { tabID }
+        var id: String { "\(tabID.uuidString)-\(mode.rawValue)" }
     }
 
-    private(set) var instances: [UUID: Instance] = [:]
-    /// Retained so the child stays ours to terminate. Keyed by tab, dropped on exit.
-    @ObservationIgnored private var processes: [UUID: Process] = [:]
+    struct Key: Hashable {
+        let tabID: UUID
+        let mode: Mode
+    }
+
+    private(set) var instances: [Key: Instance] = [:]
+    /// Retained so the child stays ours to terminate. Dropped on exit.
+    @ObservationIgnored private var processes: [Key: Process] = [:]
 
     private init() {}
 
@@ -71,14 +97,21 @@ final class ManagedChrome {
         metadataDirectory.appendingPathComponent("\(tabID.uuidString).json")
     }
 
-    private static func profileURL(for tabID: UUID) -> URL {
-        profilesDirectory.appendingPathComponent(tabID.uuidString)
+    /// `<tabID>/<mode>` — the per-tab directory is the unit the pruner reclaims, so both
+    /// of a tab's profiles go away together when its session does.
+    private static func profileURL(for tabID: UUID, mode: Mode) -> URL {
+        profilesDirectory
+            .appendingPathComponent(tabID.uuidString)
+            .appendingPathComponent(mode.profileComponent)
     }
 
     // MARK: - Reads
 
-    func isRunning(_ tabID: UUID) -> Bool { instances[tabID] != nil }
-    func instance(for tabID: UUID) -> Instance? { instances[tabID] }
+    func isRunning(_ tabID: UUID, _ mode: Mode) -> Bool { instances[Key(tabID: tabID, mode: mode)] != nil }
+    /// Anything at all running for this tab — what the tab bar's indicator asks.
+    func isRunning(_ tabID: UUID) -> Bool { Mode.allCases.contains { isRunning(tabID, $0) } }
+    func instance(for tabID: UUID, mode: Mode) -> Instance? { instances[Key(tabID: tabID, mode: mode)] }
+    func modes(for tabID: UUID) -> [Mode] { Mode.allCases.filter { isRunning(tabID, $0) } }
     var runningCount: Int { instances.count }
 
     // MARK: - Launch
@@ -90,25 +123,27 @@ final class ManagedChrome {
     /// and raises its window. So "open" and "focus" and "navigate" are all one code path,
     /// and the handoff process exits immediately on its own.
     @discardableResult
-    func open(tabID: UUID, url: String = "about:blank") -> Instance? {
+    func open(tabID: UUID, mode: Mode = .headless, url: String = "about:blank") -> Instance? {
         guard let binary = Self.binary else { return nil }
+        let key = Key(tabID: tabID, mode: mode)
         let target = Self.normalize(url)
 
-        if var existing = instances[tabID] {
+        if var existing = instances[key] {
+            // Same profile, second launch: Chrome hands the URL to the running instance
+            // and raises its window. For headless there is no window to raise, so this is
+            // just a navigation.
             handOff(binary: binary, profile: existing.profile, url: target)
             existing.url = target
-            instances[tabID] = existing
-            writeMetadata(existing)
+            instances[key] = existing
+            writeMetadata(for: tabID)
             return existing
         }
 
-        let profile = Self.profileURL(for: tabID)
+        let profile = Self.profileURL(for: tabID, mode: mode)
         try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
         guard let port = Self.freePort() else { return nil }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = [
+        var args = [
             "--user-data-dir=\(profile.path)",
             "--remote-debugging-port=\(port)",
             // Without this, a CDP client connecting from a non-null origin is rejected —
@@ -117,9 +152,20 @@ final class ManagedChrome {
             "--no-first-run",
             "--no-default-browser-check",
             "--no-service-autorun",
-            "--new-window",
-            target,
         ]
+        if mode == .headless {
+            // The point of the mode: no window is ever created, so nothing can take focus
+            // away from what the user is typing into. Screenshots and the full protocol
+            // still work — headless renders for real.
+            args.append("--headless=new")
+        } else {
+            args.append("--new-window")
+        }
+        args.append(target)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = args
         // Chrome is noisy on stderr and none of it is ours to surface.
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -131,16 +177,16 @@ final class ManagedChrome {
             return nil
         }
 
-        let instance = Instance(tabID: tabID, pid: process.processIdentifier, port: port,
-                                profile: profile, url: target, startedAt: Date())
-        processes[tabID] = process
-        instances[tabID] = instance
-        writeMetadata(instance)
+        let instance = Instance(tabID: tabID, mode: mode, pid: process.processIdentifier,
+                                port: port, profile: profile, url: target, startedAt: Date())
+        processes[key] = process
+        instances[key] = instance
+        writeMetadata(for: tabID)
 
         // The user can quit Chrome themselves; when they do, forget it rather than
         // leaving a tab claiming to own a browser that is gone.
         process.terminationHandler = { [weak self] _ in
-            Task { @MainActor in self?.forget(tabID) }
+            Task { @MainActor in self?.forget(key) }
         }
         return instance
     }
@@ -161,9 +207,10 @@ final class ManagedChrome {
     /// Criterion 14's second half. SIGTERM first so Chrome writes its profile out
     /// cleanly, then SIGKILL if it is still there — a browser that refuses to close must
     /// not outlive the tab that owns it, which is the entire promise being made here.
-    func terminate(_ tabID: UUID) {
-        guard let instance = instances[tabID] else { return }
-        let process = processes[tabID]
+    func terminate(_ tabID: UUID, _ mode: Mode) {
+        let key = Key(tabID: tabID, mode: mode)
+        guard let instance = instances[key] else { return }
+        let process = processes[key]
         process?.terminationHandler = nil          // we are the ones ending it
         if process?.isRunning == true {
             process?.terminate()
@@ -175,29 +222,37 @@ final class ManagedChrome {
             try? await Task.sleep(for: .milliseconds(1200))
             if Self.isAlive(pid, profile: instance.profile) { kill(pid, SIGKILL) }
         }
-        forget(tabID)
+        forget(key)
+    }
+
+    /// BOTH of a tab's browsers. This is what the tab-close path calls — criterion 14
+    /// says the tab owns its browser, and it owns every one of them.
+    func terminate(_ tabID: UUID) {
+        for mode in Mode.allCases { terminate(tabID, mode) }
     }
 
     func terminateAll() {
-        for tabID in Array(instances.keys) { terminate(tabID) }
+        for key in Array(instances.keys) { terminate(key.tabID, key.mode) }
     }
 
     /// Terminate synchronously, for app teardown — there is no run loop left to await a
     /// grace period on, so SIGTERM goes out and we do not linger.
     func terminateAllNow() {
-        for (tabID, instance) in instances {
-            processes[tabID]?.terminationHandler = nil
+        for (key, instance) in instances {
+            processes[key]?.terminationHandler = nil
             if instance.pid > 0 { kill(instance.pid, SIGTERM) }
+        }
+        for tabID in Set(instances.keys.map(\.tabID)) {
             try? FileManager.default.removeItem(at: Self.metadataURL(for: tabID))
         }
         instances.removeAll()
         processes.removeAll()
     }
 
-    private func forget(_ tabID: UUID) {
-        processes.removeValue(forKey: tabID)
-        instances.removeValue(forKey: tabID)
-        try? FileManager.default.removeItem(at: Self.metadataURL(for: tabID))
+    private func forget(_ key: Key) {
+        processes.removeValue(forKey: key)
+        instances.removeValue(forKey: key)
+        writeMetadata(for: key.tabID)
     }
 
     // MARK: - Orphans
@@ -221,10 +276,12 @@ final class ManagedChrome {
             defer { try? fm.removeItem(at: file) }
             guard let data = try? Data(contentsOf: file),
                   let meta = try? JSONDecoder().decode(Metadata.self, from: data) else { continue }
-            let profile = URL(fileURLWithPath: meta.profileDir)
-            if Self.isAlive(meta.pid, profile: profile) {
-                print("ManagedChrome: reaping orphaned Chrome pid \(meta.pid) from a previous run")
-                kill(meta.pid, SIGTERM)
+            for entry in meta.browsers {
+                let profile = URL(fileURLWithPath: entry.profileDir)
+                if Self.isAlive(entry.pid, profile: profile) {
+                    print("ManagedChrome: reaping orphaned \(entry.mode) Chrome pid \(entry.pid)")
+                    kill(entry.pid, SIGTERM)
+                }
             }
         }
     }
@@ -255,7 +312,8 @@ final class ManagedChrome {
             // whose browser is live right now.
             guard let id = UUID(uuidString: dir.lastPathComponent),
                   !knownSessionIDs.contains(id),
-                  instances[id] == nil,
+                  Mode.allCases.allSatisfy({ instances[Key(tabID: id, mode: $0)] == nil }),
+                  // The tab directory holds BOTH profiles, so check for either in use.
                   !commands.contains("--user-data-dir=\(dir.path)") else { continue }
             try? fm.removeItem(at: dir)
             print("ManagedChrome: pruned orphaned profile for \(id.uuidString)")
@@ -295,26 +353,43 @@ final class ManagedChrome {
 
     // MARK: - Metadata
 
-    private struct Metadata: Codable {
+    /// One file per TAB listing every browser it owns, so a session can read its own
+    /// ports without knowing how many browsers exist or which mode it wants first.
+    struct Metadata: Codable {
+        struct Entry: Codable {
+            let mode: String
+            let pid: Int32
+            let port: Int
+            /// Ready to hand to `chrome-devtools-mcp --browserUrl`.
+            let browserUrl: String
+            let profileDir: String
+            let url: String
+            let startedAt: Date
+        }
         let tabID: String
-        let pid: Int32
-        let port: Int
-        let profileDir: String
-        let url: String
-        let startedAt: Date
-        /// So a reader knows which app owns it without guessing from the path.
         let appSupport: String
+        let browsers: [Entry]
     }
 
-    private func writeMetadata(_ instance: Instance) {
-        let meta = Metadata(tabID: instance.tabID.uuidString, pid: instance.pid,
-                            port: instance.port, profileDir: instance.profile.path,
-                            url: instance.url, startedAt: instance.startedAt,
-                            appSupport: AppChannel.supportDirectory().path)
+    private func writeMetadata(for tabID: UUID) {
+        let mine = Mode.allCases.compactMap { instances[Key(tabID: tabID, mode: $0)] }
+        let url = Self.metadataURL(for: tabID)
+        guard !mine.isEmpty else {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let meta = Metadata(
+            tabID: tabID.uuidString,
+            appSupport: AppChannel.supportDirectory().path,
+            browsers: mine.map {
+                .init(mode: $0.mode.rawValue, pid: $0.pid, port: $0.port,
+                      browserUrl: "http://127.0.0.1:\($0.port)",
+                      profileDir: $0.profile.path, url: $0.url, startedAt: $0.startedAt)
+            })
         try? FileManager.default.createDirectory(at: Self.metadataDirectory,
                                                  withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(meta) else { return }
-        try? data.write(to: Self.metadataURL(for: instance.tabID), options: .atomic)
+        try? data.write(to: url, options: .atomic)
     }
 
     // MARK: - Helpers

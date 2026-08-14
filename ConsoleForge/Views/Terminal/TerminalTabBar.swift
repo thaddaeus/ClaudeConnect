@@ -141,14 +141,17 @@ struct TerminalTabBar: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            // This tab owns a Chrome. Without a mark the only way to know is to go
-            // looking in the Dock, and the whole point of the feature is that the
-            // browser belongs to the tab.
+            // This tab owns a browser. Lit for a WINDOW you could go and look at,
+            // muted for the headless one — which has nothing to look at by design, but
+            // is still consuming memory and still dies with the tab, so it is worth
+            // being able to see that it exists.
             if chrome.isRunning(session.id) {
-                Image(systemName: "globe")
+                let windowed = chrome.isRunning(session.id, .windowed)
+                Image(systemName: windowed ? "globe" : "bolt.horizontal.circle")
                     .font(.system(size: 9))
-                    .foregroundStyle(Color.accentColor)
-                    .help("This tab owns a Chrome window — it closes with the tab")
+                    .foregroundStyle(windowed ? Color.accentColor : Color.secondary)
+                    .help(chrome.modes(for: session.id).map(\.title).joined(separator: " + ")
+                          + " — closes with the tab")
             }
 
             Text(session.name)
@@ -259,23 +262,34 @@ struct TerminalTabBar: View {
             }
 
             if chrome.isAvailable {
-                if chrome.isRunning(session.id) {
+                // The window: yours. Opening it a second time raises the existing one
+                // rather than starting another.
+                Button {
+                    chrome.open(tabID: session.id, mode: .windowed)
+                } label: {
+                    Label(chrome.isRunning(session.id, .windowed)
+                          ? "Focus Browser Window" : "Open Browser Window", systemImage: "globe")
+                }
+                if chrome.isRunning(session.id, .windowed) {
                     Button {
-                        chrome.open(tabID: session.id)
+                        chrome.terminate(session.id, .windowed)
                     } label: {
-                        Label("Focus Chrome", systemImage: "globe")
+                        Label("Close Browser Window", systemImage: "globe.badge.chevron.backward")
                     }
-                    Button {
-                        chrome.terminate(session.id)
-                    } label: {
-                        Label("Close Chrome", systemImage: "globe.badge.chevron.backward")
+                }
+
+                // The headless one: the agent's. Never has a window, so it can never
+                // take focus while you are typing.
+                Button {
+                    if chrome.isRunning(session.id, .headless) {
+                        chrome.terminate(session.id, .headless)
+                    } else {
+                        chrome.open(tabID: session.id, mode: .headless)
                     }
-                } else {
-                    Button {
-                        chrome.open(tabID: session.id)
-                    } label: {
-                        Label("Open Chrome", systemImage: "globe")
-                    }
+                } label: {
+                    Label(chrome.isRunning(session.id, .headless)
+                          ? "Stop Agent Browser" : "Start Agent Browser",
+                          systemImage: "bolt.horizontal.circle")
                 }
                 Divider()
             }

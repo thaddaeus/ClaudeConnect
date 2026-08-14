@@ -395,6 +395,8 @@ struct ConsoleForgeApp: App {
         switch command.action {
         case "close-tab":
             handleCloseTab(command)
+        case "browser-window":
+            handleBrowserWindow(command)
         default:
             handleOpenTab(command)
         }
@@ -433,6 +435,16 @@ struct ConsoleForgeApp: App {
 
         // Bring ConsoleForge to the front
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// A session asking for a real browser WINDOW — the one thing it cannot do for
+    /// itself. Its own browser is headless by design, so when it hits a sign-in wall, or
+    /// wants a human to look at something, this is how it produces something to look at.
+    /// Owned by the requesting tab like any other, so it still dies with it.
+    private func handleBrowserWindow(_ command: TabCommand) {
+        guard let idString = command.tabID, let tabID = UUID(uuidString: idString),
+              store.openTabIDs.contains(tabID) else { return }
+        chrome.open(tabID: tabID, mode: .windowed, url: command.url ?? "about:blank")
     }
 
     private func handleCloseTab(_ command: TabCommand) {

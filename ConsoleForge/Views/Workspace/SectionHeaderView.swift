@@ -276,8 +276,8 @@ struct LayoutCommands: Commands {
     let store: SessionStore
     let chrome: ManagedChrome
 
-    private var chromeIsRunning: Bool {
-        store.activeTabID.map { chrome.isRunning($0) } ?? false
+    private var agentBrowserRunning: Bool {
+        store.activeTabID.map { chrome.isRunning($0, .headless) } ?? false
     }
 
     var body: some Commands {
@@ -288,16 +288,21 @@ struct LayoutCommands: Commands {
             .keyboardShortcut("b", modifiers: [.command, .shift])
 
             // Chrome belongs HERE, beside the other browser, even though it is not a
-            // slot section — it was under File, which is nowhere anyone would look for
-            // a browser when Safari, Web Output and Documents are all in this menu.
-            // Worded per-tab rather than Show/Hide because that is the whole point of
-            // it: the window belongs to a tab and dies with it.
-            Button(chromeIsRunning ? "Close This Tab’s Chrome" : "Open Chrome for This Tab") {
+            // slot section. Two commands, not one, because the two browsers exist for
+            // different people: the window is for you, the headless one is for the agent
+            // and deliberately has nothing to look at.
+            Button("Open Browser Window") {
                 guard let active = store.activeTabID else { return }
-                if chrome.isRunning(active) { chrome.terminate(active) }
-                else { chrome.open(tabID: active) }
+                chrome.open(tabID: active, mode: .windowed)
             }
             .keyboardShortcut("b", modifiers: [.command, .option])
+            .disabled(store.activeTabID == nil || !chrome.isAvailable)
+
+            Button(agentBrowserRunning ? "Stop Agent Browser" : "Start Agent Browser") {
+                guard let active = store.activeTabID else { return }
+                if chrome.isRunning(active, .headless) { chrome.terminate(active, .headless) }
+                else { chrome.open(tabID: active, mode: .headless) }
+            }
             .disabled(store.activeTabID == nil || !chrome.isAvailable)
 
             Button(layout.isOpen(.webConsole) ? "Hide Web Output" : "Show Web Output") {
