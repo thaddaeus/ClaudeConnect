@@ -32,6 +32,10 @@ Target app (all modes):
 
 Close options:
   --close-self             Close the tab this command runs in (reads CONSOLEFORGE_TAB_ID)
+  --browser                Give the new tab its OWN headless browser, which its agent
+                           drives through the chrome-devtools MCP instead of that MCP
+                           launching a Chrome of its own. Off by default: a browser costs
+                           100-200MB and most tabs never need one.
   --browser-window [URL]   Open a real browser WINDOW owned by this tab (for a human to
                            look at or sign in to). The agent's own browser is headless.
   --browser-info           Print this tab's managed-browser ports as JSON, for pointing
@@ -305,6 +309,9 @@ def main():
             flags.append(args[i + 1]); i += 2
         elif arg == "--color" and i + 1 < len(args):
             cmd["tabColor"] = args[i + 1]; i += 2
+        elif arg == "--browser":
+            cmd["usesManagedBrowser"] = True
+            i += 1
         elif arg == "--continue":
             cmd["continueSession"] = True; i += 1
         elif arg == "--no-group":

@@ -397,8 +397,24 @@ struct ConsoleForgeApp: App {
             handleCloseTab(command)
         case "browser-window":
             handleBrowserWindow(command)
-        default:
+        case "browser-ensure":
+            // The wrapper asking for this tab's headless browser on first use. Started
+            // HERE, by the app, so it is a child of ConsoleForge and dies with the tab —
+            // a Chrome spawned by the MCP server would outlive it.
+            if let s = command.tabID, let id = UUID(uuidString: s), store.openTabIDs.contains(id) {
+                chrome.ensureHeadless(tabID: id)
+            }
+        case "open-tab", "":
             handleOpenTab(command)
+        default:
+            // An action this build does not know is IGNORED, not treated as "open a tab".
+            //
+            // The bus is a shared directory and the CLI is a symlink to the checkout, so a
+            // newer CLI routinely talks to an older app — exactly what happens between a
+            // beta build and production. With `default: handleOpenTab` any verb added
+            // later (browser-ensure, browser-window) silently opened a STRAY TAB on the
+            // older side, which is both baffling and, in production, disruptive.
+            print("ConsoleForge: ignoring unknown command action \(command.action.isEmpty ? "<empty>" : command.action)")
         }
     }
 
@@ -419,6 +435,7 @@ struct ConsoleForgeApp: App {
         if let prompt = command.appendSystemPrompt { config.appendSystemPrompt = prompt }
         if let prompt = command.initialPrompt { config.initialPrompt = prompt }
         if let mcp = command.mcpConfigPath { config.mcpConfigPath = mcp }
+        if let browser = command.usesManagedBrowser { config.usesManagedBrowser = browser }
         if let flags = command.additionalFlags { config.additionalFlags = flags.joined(separator: "\n") }
         if let color = command.tabColor { config.tabColorHex = color }
         if let cont = command.continueSession { config.continueSession = cont }

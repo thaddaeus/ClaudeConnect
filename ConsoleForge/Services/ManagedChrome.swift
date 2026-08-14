@@ -223,37 +223,56 @@ final class ManagedChrome {
         metadataDirectory.appendingPathComponent("\(tabID.uuidString)-mcp.json")
     }
 
-    /// Start this tab's headless browser (if it is not already up) and write an MCP
-    /// config that points `chrome-devtools` at it.
+    /// Write the per-tab MCP config. Starts NOTHING.
     ///
-    /// THIS is what makes the managed browser the one a session actually uses. Without
-    /// it the tab owned a browser that nothing pointed at, while the MCP went on
-    /// spawning its own headed Chrome — which is the window that kept appearing.
+    /// The config names a wrapper script rather than a port, so the browser is started on
+    /// FIRST USE instead of at session launch. A headless Chrome is 100-200MB; one per tab
+    /// at launch is fine for four tabs and indefensible for the fifteen a real day
+    /// involves. Claude Code starts an MCP server lazily, the first time one of its tools
+    /// is called, so the wrapper runs exactly when a browser is actually wanted — see
+    /// scripts/consoleforge-chrome-mcp.
     ///
     /// The server is deliberately named `chrome-devtools`, the same as the global entry,
-    /// so it SHADOWS it for this session rather than adding a second one. `--browserUrl`
-    /// makes the MCP attach to a running browser instead of launching one, so there is
-    /// no second Chrome and nothing to pop up.
+    /// so it SHADOWS it for this session rather than adding a second one.
     ///
-    /// Returns the config path to hand to `claude --mcp-config`, or nil if Chrome is not
-    /// installed — in which case the session simply launches as it always did.
-    func prepareSessionBrowser(tabID: UUID) -> String? {
-        guard let instance = open(tabID: tabID, mode: .headless) else { return nil }
+    /// Returns the config path for `claude --mcp-config`, or nil if Chrome is not
+    /// installed or the wrapper is missing — in which case the session launches exactly
+    /// as it always did.
+    func writeSessionMCPConfig(tabID: UUID) -> String? {
+        guard Self.binary != nil, let wrapper = Self.wrapperPath else { return nil }
         let config: [String: Any] = [
             "mcpServers": [
                 "chrome-devtools": [
                     "type": "stdio",
-                    "command": "npx",
-                    "args": ["-y", "chrome-devtools-mcp@latest",
-                             "--browserUrl", "http://127.0.0.1:\(instance.port)"],
+                    "command": wrapper,
+                    "args": [String](),
                 ]
             ]
         ]
         let url = Self.mcpConfigURL(for: tabID)
+        try? FileManager.default.createDirectory(at: Self.metadataDirectory,
+                                                 withIntermediateDirectories: true)
         guard let data = try? JSONSerialization.data(withJSONObject: config,
                                                      options: [.prettyPrinted, .sortedKeys]),
               (try? data.write(to: url, options: .atomic)) != nil else { return nil }
         return url.path
+    }
+
+    /// The wrapper ships in the app bundle; the repo copy is the fallback for `swift run`.
+    static let wrapperPath: String? = {
+        var candidates: [String] = []
+        if let res = Bundle.main.resourcePath {
+            candidates.append(res + "/consoleforge-chrome-mcp")
+        }
+        candidates.append(FileManager.default.currentDirectoryPath + "/scripts/consoleforge-chrome-mcp")
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }()
+
+    /// Start the headless browser if it is not already up. Called when the wrapper asks,
+    /// i.e. the moment a session first reaches for a browser.
+    func ensureHeadless(tabID: UUID) {
+        guard !isRunning(tabID, .headless) else { return }
+        open(tabID: tabID, mode: .headless)
     }
 
     // MARK: - Terminate

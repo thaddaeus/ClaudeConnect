@@ -127,6 +127,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BINARY" "$BETA_EXEC_PATH.new"
 mv -f "$BETA_EXEC_PATH.new" "$BETA_EXEC_PATH"
 cp "$PROJECT_DIR/scripts/consoleforge-tab" "$APP_BUNDLE/Contents/Resources/consoleforge-tab"
+cp "$PROJECT_DIR/scripts/consoleforge-chrome-mcp" "$APP_BUNDLE/Contents/Resources/consoleforge-chrome-mcp"
 # Tinted icon so beta is tellable from production at a glance in the Dock; falls
 # back to the production icon if the tinted one hasn't been generated.
 if [ -f "$PROJECT_DIR/ConsoleForge/Assets/AppIconBeta.icns" ]; then

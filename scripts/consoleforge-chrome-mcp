@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Start this tab's managed browser on FIRST USE, then hand over to chrome-devtools-mcp.
+
+WHY THIS EXISTS. The MCP config has to name a browser when the session launches, but
+starting a headless Chrome per tab at launch costs 100-200MB each — fine for four tabs
+in a test, not fine for the fifteen a real day involves. So the config names THIS script
+instead of a port, and nothing starts until the session actually reaches for a browser.
+
+Claude Code starts an MCP server lazily, the first time a tool from it is called. That
+makes this the exact hook: by the time we run, the session wants a browser, so we ask
+ConsoleForge to start one, wait for it, and exec the real server against it.
+
+ConsoleForge starts it — not this script — deliberately. The browser has to be a CHILD
+of the app for "it dies with the tab" to hold; a Chrome spawned here would be a child of
+the MCP server and would outlive the tab, which is the whole promise of the feature.
+"""
+import json, os, subprocess, sys, time, urllib.request
+
+MCP_PACKAGE = "chrome-devtools-mcp@latest"
+# Chrome cold-starts in about a second; a slow machine under load can take several.
+STARTUP_TIMEOUT = 25.0
+
+
+def support_dir():
+    # Set by whichever channel owns this tab (see ClaudeProcessBuilder) — this is what
+    # keeps a beta session talking to beta's browser rather than production's.
+    if d := os.environ.get("CONSOLEFORGE_APP_SUPPORT"):
+        return d
+    return os.path.expanduser("~/Library/Application Support/ConsoleForge")
+
+
+def metadata(tab_id):
+    path = os.path.join(support_dir(), "chrome", f"{tab_id}.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def headless_url(tab_id):
+    meta = metadata(tab_id)
+    if not meta:
+        return None
+    for entry in meta.get("browsers", []):
+        if entry.get("mode") == "headless":
+            return entry.get("browserUrl")
+    return None
+
+
+def answers(url):
+    try:
+        with urllib.request.urlopen(f"{url}/json/version", timeout=2):
+            return True
+    except Exception:
+        return False
+
+
+def request_browser(tab_id):
+    """Ask ConsoleForge to start it, through the same command bus the CLI uses."""
+    commands = os.path.join(support_dir(), "commands")
+    os.makedirs(commands, exist_ok=True)
+    payload = {"action": "browser-ensure", "tabID": tab_id}
+    tmp = os.path.join(commands, f".{os.getpid()}.tmp")
+    final = os.path.join(commands, f"{int(time.time())}-{os.getpid()}-chrome.json")
+    with open(tmp, "w") as f:
+        json.dump(payload, f)
+    os.rename(tmp, final)
+
+
+def main():
+    tab_id = os.environ.get("CONSOLEFORGE_TAB_ID")
+    passthrough = sys.argv[1:]
+
+    # No tab identity means we are not inside a ConsoleForge session — fall straight
+    # through to the stock server so nothing is worse off than before.
+    if not tab_id:
+        os.execvp("npx", ["npx", "-y", MCP_PACKAGE] + passthrough)
+
+    url = headless_url(tab_id)
+    if not (url and answers(url)):
+        request_browser(tab_id)
+        deadline = time.time() + STARTUP_TIMEOUT
+        while time.time() < deadline:
+            url = headless_url(tab_id)
+            if url and answers(url):
+                break
+            time.sleep(0.4)
+
+    if url and answers(url):
+        os.execvp("npx", ["npx", "-y", MCP_PACKAGE, "--browserUrl", url] + passthrough)
+
+    # Could not get one — better to run the stock server (which launches its own Chrome)
+    # than to leave the session with no browser tooling at all.
+    print(f"consoleforge-chrome-mcp: no managed browser for tab {tab_id}; "
+          f"falling back to a self-launched one", file=sys.stderr)
+    os.execvp("npx", ["npx", "-y", MCP_PACKAGE] + passthrough)
+
+
+if __name__ == "__main__":
+    main()

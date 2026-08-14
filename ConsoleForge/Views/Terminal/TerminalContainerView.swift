@@ -136,19 +136,20 @@ struct TerminalContainerView: View {
             // CONSOLE STRIP ONLY. A document tab has no PTY and must never reach
             // TerminalSession / ClaudeProcessBuilder (task 9736 criterion 11).
             openIDs: store.terminalTabIDs,
-            // Every terminal session is launched with its OWN browser already running and
-            // its OWN MCP config pointing at it. This is the step that makes the managed
-            // browser the one the session actually uses: without it the tab owned a
-            // browser nothing pointed at, while chrome-devtools-mcp went on launching its
-            // own headed Chrome — the window that kept appearing unasked.
-            //
-            // Done here because the port has to exist BEFORE claude starts: the config
-            // naming that port is passed on the command line at launch.
+            // Every terminal session launches with its OWN MCP config, so the browser
+            // it reaches for is the one this tab owns rather than a headed Chrome
+            // chrome-devtools-mcp launches for itself — the window that kept appearing
+            // unasked. NOTHING starts here: the config names a wrapper that starts the
+            // browser on first use, so an idle tab costs nothing.
             resolveLaunch: { id in
                 guard var launch = store.resolveLaunch(for: id) else { return nil }
+                // Opt-in only. Without this every tab gets a browser at session start —
+                // MCP servers are started with the session, not on first tool use — which
+                // is 100-200MB per tab for something most tabs never touch.
                 // Never override a config the user set themselves.
-                if launch.config.mcpConfigPath?.isEmpty ?? true,
-                   let path = ManagedChrome.shared.prepareSessionBrowser(tabID: id) {
+                if launch.config.usesManagedBrowser,
+                   launch.config.mcpConfigPath?.isEmpty ?? true,
+                   let path = ManagedChrome.shared.writeSessionMCPConfig(tabID: id) {
                     launch.config.mcpConfigPath = path
                 }
                 return launch
