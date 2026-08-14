@@ -152,6 +152,20 @@ final class ManagedChrome {
             "--no-first-run",
             "--no-default-browser-check",
             "--no-service-autorun",
+            // Local Network Access, on by default in Chrome 138+, gates a page's access to
+            // LAN and VPN addresses behind a per-site grant. Every managed browser starts
+            // on a FRESH --user-data-dir, so nothing the user allowed in their everyday
+            // Chrome carries over and each new one begins gated — which is why a dev
+            // server that resolves fine elsewhere fails here. The sub-checks are listed
+            // explicitly because disabling the umbrella does not cover the WebSocket,
+            // WebTransport and WebRTC paths, and a dev server reached over a socket would
+            // still have failed.
+            //
+            // Scoped and deliberate: these profiles exist to reach the user's own
+            // development machines, they are isolated per tab, and they are thrown away
+            // with the tab. This is NOT applied to any browser the user already had.
+            "--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessChecksWebSockets," +
+            "LocalNetworkAccessChecksWebTransport,LocalNetworkAccessChecksWebRTC",
         ]
         if mode == .headless {
             // The point of the mode: no window is ever created, so nothing can take focus
