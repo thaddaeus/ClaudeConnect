@@ -182,6 +182,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ConsoleForge runs your sessions and their browsers, which reach development servers on your local network or over a VPN. Without this, those addresses are treated as remote and fail.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>ConsoleForge listens for your wake phrase so you can talk to a session instead of typing. Audio is transcribed on this Mac and never leaves it.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
