@@ -265,9 +265,33 @@ echo "DMG created and signed."
 # ── Step 5: Notarize ──
 echo ""
 echo "Submitting for notarization..."
-xcrun notarytool submit "$DMG_PATH" \
-    --keychain-profile "$NOTARY_PROFILE" \
-    --wait 2>&1
+
+# The keychain PROFILE is the normal path, but reading it needs an interactive Keychain
+# approval — so an unattended release (nobody at the machine to click Allow) fails with
+# "No Keychain password item found" even though the profile exists. Fall back to explicit
+# credentials, with the app-specific password read from its own Keychain item, which does
+# not carry that ACL.
+#
+# No credential is written into this file: the team id comes out of the signing identity
+# that is already required, and the Apple ID comes from $NOTARY_APPLE_ID or a Keychain
+# item. This repo is public.
+NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+    echo "  keychain profile unreadable here — falling back to explicit credentials"
+    NOTARY_PW="$(security find-generic-password -s 'consoleforge-notary-app-password' -w 2>/dev/null || true)"
+    NOTARY_ID="${NOTARY_APPLE_ID:-$(security find-generic-password -s 'consoleforge-notary-apple-id' -w 2>/dev/null || true)}"
+    # "Developer ID Application: Name (TEAMID)" -> TEAMID
+    NOTARY_TEAM="$(printf '%s' "$SIGN_IDENTITY" | sed -n 's/.*(\([A-Z0-9]*\))$/\1/p')"
+    if [ -n "$NOTARY_PW" ] && [ -n "$NOTARY_ID" ] && [ -n "$NOTARY_TEAM" ]; then
+        NOTARY_ARGS=(--apple-id "$NOTARY_ID" --team-id "$NOTARY_TEAM" --password "$NOTARY_PW")
+    else
+        echo "ERROR: cannot notarize unattended — need the keychain profile, or"
+        echo "       \$NOTARY_APPLE_ID plus the 'consoleforge-notary-app-password' Keychain item."
+        exit 1
+    fi
+fi
+
+xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait 2>&1
 
 echo "Stapling notarization ticket..."
 xcrun stapler staple "$DMG_PATH"
