@@ -404,6 +404,12 @@ struct ConsoleForgeApp: App {
             if let s = command.tabID, let id = UUID(uuidString: s), store.openTabIDs.contains(id) {
                 chrome.ensureHeadless(tabID: id)
             }
+        case "browser-navigate", "browser-eval", "browser-scroll", "browser-screenshot":
+            // The in-app Safari panel, driven from a session. Unlike the managed-Chrome
+            // verbs above these are not per-tab: the panel belongs to the WINDOW, the
+            // same as the rest of the slot layout, so any session in this window drives
+            // the one browser it can see.
+            BrowserControl.shared.handle(command)
         case "open-tab", "":
             handleOpenTab(command)
         default:

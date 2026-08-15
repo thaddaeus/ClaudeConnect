@@ -19,10 +19,25 @@ struct TabCommand: Codable {
     var parentTabID: String?
     /// Tab ID for close-tab action (matches CONSOLEFORGE_TAB_ID env var)
     var tabID: String?
-    /// Page to load for the `browser-window` action.
+    /// Page to load for the `browser-window` and `browser-navigate` actions.
     var url: String?
     /// `--browser`: give the spawned tab its own managed browser.
     var usesManagedBrowser: Bool?
+
+    // MARK: - In-app browser control (see BrowserControl)
+
+    /// Correlates a command with its reply in `responses/`. Present only for the
+    /// verbs that answer; the fire-and-forget ones leave it nil and nothing is written.
+    var requestID: String?
+    /// JavaScript for `browser-eval`.
+    var script: String?
+    /// Absolute scroll position for `browser-scroll`; wins over `scrollBy`.
+    var scrollTo: Double?
+    /// Relative scroll delta for `browser-scroll`.
+    var scrollBy: Double?
+    /// Where `browser-screenshot` should write its PNG. Defaults into the channel's
+    /// support directory when absent.
+    var path: String?
 }
 
 class CommandWatcher {

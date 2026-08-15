@@ -32,6 +32,17 @@ Target app (all modes):
 
 Close options:
   --close-self             Close the tab this command runs in (reads CONSOLEFORGE_TAB_ID)
+  --close                  Close a tab (requires --name)
+  --name NAME              Name of the tab to close (with --close)
+
+Browser options — the app's own Safari panel (what the human is looking at).
+These print a JSON reply and exit non-zero if the action failed:
+  --browser-navigate URL   Point the in-app browser at a page. Returns once it loads.
+  --browser-eval SCRIPT    Run JavaScript in the page and return its value
+  --browser-screenshot [P] Write a PNG of the panel; prints the path it used
+  --browser-scroll N       Scroll by N pixels (negative for up), or 'top' / 'bottom'
+
+Browser options — a managed Chrome owned by this tab (a DIFFERENT browser):
   --browser                Give the new tab its OWN headless browser, which its agent
                            drives through the chrome-devtools MCP instead of that MCP
                            launching a Chrome of its own. Off by default: a browser costs
@@ -40,8 +51,6 @@ Close options:
                            look at or sign in to). The agent's own browser is headless.
   --browser-info           Print this tab's managed-browser ports as JSON, for pointing
                            chrome-devtools-mcp --browserUrl at this tab's own browser
-  --close                  Close a tab (requires --name)
-  --name NAME              Name of the tab to close (with --close)
 
 Wait options:
   --wait-for-close ID      Block until the tab with the given ID closes, then print the event JSON
@@ -124,6 +133,50 @@ def send_command(cmd):
     with open(tmppath, "w") as f:
         json.dump(cmd, f, indent=2)
     os.rename(tmppath, filepath)
+
+
+def send_request(cmd, timeout=35):
+    """Send a command that ANSWERS, and block for its reply.
+
+    The rest of this script is fire-and-forget: drop a JSON file, the app picks it
+    up, done. `--browser-eval` has to hand a value back, so these verbs carry a
+    requestID and the app writes `responses/<id>.json`. Polling rather than kqueue
+    because the wait is short and bounded — this is a request/response, not a tab
+    that might stay open for an hour.
+    """
+    request_id = f"{int(time.time() * 1000)}-{os.getpid()}"
+    cmd["requestID"] = request_id
+    responses_dir = os.path.join(os.path.dirname(COMMANDS_DIR), "responses")
+    os.makedirs(responses_dir, exist_ok=True)
+    reply_path = os.path.join(responses_dir, f"{request_id}.json")
+
+    send_command(cmd)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if os.path.exists(reply_path):
+            try:
+                with open(reply_path) as fh:
+                    payload = json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                # The app writes atomically, so this means a genuinely corrupt file
+                # rather than a race. Do not spin on it.
+                os.unlink(reply_path)
+                print("Error: unreadable reply from ConsoleForge", file=sys.stderr)
+                sys.exit(1)
+            os.unlink(reply_path)
+            return payload
+        time.sleep(0.05)
+
+    print("Error: ConsoleForge did not answer within %ds. Is the app running?" % timeout,
+          file=sys.stderr)
+    sys.exit(1)
+
+
+def emit_reply(payload):
+    """Print a reply and exit with a status the shell can branch on."""
+    print(json.dumps(payload, indent=2))
+    sys.exit(0 if payload.get("ok") else 1)
 
 
 def wait_for_close(tab_id, timeout=None):
@@ -231,12 +284,58 @@ def main():
         exit_code = event.get("exitCode")
         sys.exit(exit_code if exit_code is not None else 0)
 
-    # Hand the human a real browser window, from inside a session.
+    # Drive the app's own Safari panel — the browser the human is looking at.
     #
-    # Deliberately the ONLY browser verb here. The agent already drives its own headless
-    # Chrome through the DevTools MCP; what it cannot do is produce a window for a person
-    # to look at or sign in to. General session->browser control (navigate, eval,
-    # screenshot) is IDEA Base task 9925 and belongs there, not in this script.
+    # Distinct from the managed-Chrome verbs below: this is the in-app WKWebView in the
+    # slot layout, not a Chrome this tab owns. A session asked to "open this link in the
+    # in-app browser" wants THIS. These are the only verbs here that answer, because
+    # --browser-eval has to return a value; see send_request.
+    if "--browser-navigate" in args:
+        i = args.index("--browser-navigate")
+        if i + 1 >= len(args) or args[i + 1].startswith("--"):
+            print("Error: --browser-navigate needs a URL", file=sys.stderr)
+            sys.exit(1)
+        emit_reply(send_request({"action": "browser-navigate", "url": args[i + 1]}))
+
+    if "--browser-eval" in args:
+        i = args.index("--browser-eval")
+        if i + 1 >= len(args):
+            print("Error: --browser-eval needs a script", file=sys.stderr)
+            sys.exit(1)
+        emit_reply(send_request({"action": "browser-eval", "script": args[i + 1]}))
+
+    if "--browser-screenshot" in args:
+        i = args.index("--browser-screenshot")
+        cmd = {"action": "browser-screenshot"}
+        if i + 1 < len(args) and not args[i + 1].startswith("--"):
+            cmd["path"] = os.path.abspath(os.path.expanduser(args[i + 1]))
+        emit_reply(send_request(cmd))
+
+    if "--browser-scroll" in args:
+        i = args.index("--browser-scroll")
+        if i + 1 >= len(args) or args[i + 1].startswith("--"):
+            print("Error: --browser-scroll needs a pixel amount, or 'top'/'bottom'",
+                  file=sys.stderr)
+            sys.exit(1)
+        target = args[i + 1]
+        cmd = {"action": "browser-scroll"}
+        if target == "top":
+            cmd["scrollTo"] = 0
+        elif target == "bottom":
+            # Past any real page height; the browser clamps to the document.
+            cmd["scrollTo"] = 99_999_999
+        else:
+            try:
+                cmd["scrollBy"] = float(target)
+            except ValueError:
+                print("Error: --browser-scroll takes a number of pixels (negative scrolls "
+                      "up), or 'top'/'bottom'", file=sys.stderr)
+                sys.exit(1)
+        emit_reply(send_request(cmd))
+
+    # Hand the human a real browser WINDOW — a managed Chrome owned by this tab, which
+    # is a different browser from the Safari panel above. This one is for signing in to
+    # something, or for a page the agent's own headless browser cannot show anybody.
     if "--browser-window" in args:
         i = args.index("--browser-window")
         url = args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("--") else "about:blank"

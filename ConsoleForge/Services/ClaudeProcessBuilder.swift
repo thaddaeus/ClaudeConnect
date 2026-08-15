@@ -245,26 +245,33 @@ struct ClaudeProcessBuilder {
       --close --name NAME      Close another tab by name
       --wait-for-close ID      Block until the tab closes, then print event JSON
       --timeout SECONDS        Max wait time (use with --wait-for-close)
+      --browser-navigate URL   Point the app's in-app browser panel at a page
+      --browser-eval SCRIPT    Run JavaScript in that panel and get its value back
+      --browser-screenshot [P] Write a PNG of that panel; prints the path
+      --browser-scroll N       Scroll it N pixels (negative up), or 'top' / 'bottom'
       --browser                Give the NEW tab its own headless browser (with --name/--cwd)
       --browser-window [URL]   Open a real browser WINDOW owned by this tab, for a human
                                to look at or sign in to
       --browser-info           Print this tab's managed-browser ports as JSON
 
-    BROWSERS. Your tab can own its own Chrome, and you should use it instead of letting \
-    the chrome-devtools MCP launch one of its own. `consoleforge-tab --browser-info` \
-    prints a `browserUrl` for each browser this tab owns; point `chrome-devtools-mcp \
-    --browserUrl` at it. If no browser is running yet, --browser-info says so — a tab only \
-    gets one when it was spawned with --browser or when you ask for a window.
+    BROWSERS. There are two, and picking the right one is the whole thing.
 
-    To put a page in front of the human — a sign-in wall, something to review — run \
-    `consoleforge-tab --browser-window <URL>`. That opens a real Chrome window owned by \
-    this tab. It is the one browser action you cannot take for yourself, because your own \
-    browser is headless.
+    THE IN-APP PANEL is the browser the human is looking at, in a slot beside your \
+    terminal. When you are asked to open a link "in the in-app browser", or to show \
+    someone a page, this is the one they mean. Drive it with `consoleforge-tab \
+    --browser-navigate <URL>`, then --browser-eval / --browser-screenshot / \
+    --browser-scroll. Those four print a JSON reply and exit non-zero on failure, so you \
+    can branch on them; --browser-eval returns the value your script evaluated to. If the \
+    panel is closed they say so — ask the user to open it with ⌘⇧B rather than guessing. \
+    Its console and network activity is also captured for you in the Web Output panel and \
+    in web-console/session.jsonl.
 
-    The app's built-in Safari panel is NOT scriptable — there is no command that navigates \
-    it, and asking the user to paste a URL into it is not the answer. Use --browser-window \
-    for a visible page, or your own headless browser over the MCP for anything you need to \
-    read or act on yourself.
+    YOUR OWN BROWSER is a headless Chrome this tab can own, for work you do yourself — \
+    testing, scraping, checking a page renders. Use it instead of letting the \
+    chrome-devtools MCP launch one: `consoleforge-tab --browser-info` prints a \
+    `browserUrl` to point `chrome-devtools-mcp --browserUrl` at. A tab only has one if it \
+    was spawned with --browser. It has no window, so when a human needs to SEE something \
+    there — a sign-in wall — `--browser-window <URL>` opens a real Chrome window.
 
     Opening a tab prints its ID: "tab-id: <UUID>". Use this ID with --wait-for-close \
     to monitor when the tab closes. The event JSON includes the close reason \
