@@ -699,6 +699,10 @@ struct WorkspaceView: View {
         } else {
             browser = nil
         }
+        // Publish the live model so a session's bus commands can reach it from outside
+        // the view tree. `BrowserControl` holds it weakly, so this is a door, not a
+        // second owner — closing the section still releases the web view.
+        BrowserControl.shared.register(browser)
     }
 
     // MARK: - Drag state
