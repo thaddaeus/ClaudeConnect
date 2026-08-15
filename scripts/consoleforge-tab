@@ -12,8 +12,8 @@ Open options:
   --name NAME              Tab name (default: "Dynamic Session")
   --cwd PATH               Working directory
   --model MODEL            Claude model (opus, sonnet, haiku)
-  --permission-mode MODE   Permission mode (default, plan, acceptEdits, auto, dontAsk, bypassPermissions)
-  --effort LEVEL           Effort level (low, medium, high, max)
+  --permission-mode MODE   Permission mode (manual, plan, acceptEdits, auto, dontAsk, bypassPermissions)
+  --effort LEVEL           Effort level (low, medium, high, xhigh, max)
   --system-prompt TEXT     Replace system prompt
   --append-system-prompt TEXT  Append to system prompt
   --prompt TEXT             Initial prompt (visible, sent as first message)
