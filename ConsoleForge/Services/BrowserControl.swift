@@ -208,6 +208,17 @@ final class BrowserControl {
         // WKWebView puts the page's own exception text here; it is far more useful to a
         // session than the generic "A JavaScript exception occurred".
         if let detail = ns.userInfo["WKJavaScriptExceptionMessage"] as? String { return detail }
-        return ns.localizedDescription
+        let message = ns.localizedDescription
+        // WebKit refuses to serialize DOM nodes and rejects the call before any of our
+        // code runs, so this cannot be fixed by being more permissive on our side. It is
+        // the single most likely thing to go wrong — `document.body`, a bare
+        // querySelector — so the error says what to do instead of just what failed.
+        if message.contains("unsupported type") {
+            return message + ". Scripts must return a string, number, boolean, array or "
+                 + "plain object — a DOM node cannot cross. Return a property of it "
+                 + "instead, e.g. `document.body.innerText` or "
+                 + "`[...document.querySelectorAll('a')].map(a => a.href)`."
+        }
+        return message
     }
 }
