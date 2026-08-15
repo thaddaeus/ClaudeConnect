@@ -66,11 +66,26 @@ class PtyProcess {
         }
         // Prepend user tool directories to PATH so the login shell finds them immediately
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // OUR OWN Resources go FIRST. The bundle ships consoleforge-tab and
+        // consoleforge-chrome-mcp, and this app must run the copies it was built,
+        // signed and notarized with — not whatever else on the machine answers to
+        // those names. With ~/.local/bin ahead of us, a developer symlink pointing
+        // at a working tree silently replaced the shipped CLI in every session,
+        // including production's, and the app then executed whatever that tree
+        // happened to be mid-edit. It also defeated the channel split: beta and
+        // production both resolved the same foreign file, so neither ran its own
+        // code. Resources is channel-correct by construction — beta's bundle
+        // contains beta's script — so ordering it first is what makes
+        // "beta cannot disturb production" true for the CLI as well.
+        //
+        // Safe to shadow with: this directory holds nothing but ConsoleForge's own
+        // tools. It is deliberately NOT ahead of the user's PATH for anything else —
+        // claude, git and the rest still resolve from ~/.local/bin and homebrew below.
         let extraPaths = [
+            Bundle.main.resourcePath,  // app bundle Resources (consoleforge-tab)
             "\(home)/.local/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
-            Bundle.main.resourcePath,  // app bundle Resources (consoleforge-tab)
         ].compactMap { $0 }
         if let pathIdx = envStrings.firstIndex(where: { $0.hasPrefix("PATH=") }) {
             let existing = String(envStrings[pathIdx].dropFirst(5))

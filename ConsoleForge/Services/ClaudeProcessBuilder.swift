@@ -232,8 +232,8 @@ struct ClaudeProcessBuilder {
       --name NAME              Tab name
       --cwd PATH               Working directory
       --model MODEL            Claude model (opus, opusplan, sonnet, haiku, fable)
-      --permission-mode MODE   Permission mode (default, plan, acceptEdits, auto, dontAsk, bypassPermissions)
-      --effort LEVEL           Effort level (low, medium, high, max)
+      --permission-mode MODE   Permission mode (manual, plan, acceptEdits, auto, dontAsk, bypassPermissions)
+      --effort LEVEL           Effort level (low, medium, high, xhigh, max)
       --system-prompt TEXT     Replace system prompt
       --append-system-prompt TEXT  Append to system prompt
       --prompt TEXT             Initial prompt (sent as first message)
@@ -245,6 +245,26 @@ struct ClaudeProcessBuilder {
       --close --name NAME      Close another tab by name
       --wait-for-close ID      Block until the tab closes, then print event JSON
       --timeout SECONDS        Max wait time (use with --wait-for-close)
+      --browser                Give the NEW tab its own headless browser (with --name/--cwd)
+      --browser-window [URL]   Open a real browser WINDOW owned by this tab, for a human
+                               to look at or sign in to
+      --browser-info           Print this tab's managed-browser ports as JSON
+
+    BROWSERS. Your tab can own its own Chrome, and you should use it instead of letting \
+    the chrome-devtools MCP launch one of its own. `consoleforge-tab --browser-info` \
+    prints a `browserUrl` for each browser this tab owns; point `chrome-devtools-mcp \
+    --browserUrl` at it. If no browser is running yet, --browser-info says so — a tab only \
+    gets one when it was spawned with --browser or when you ask for a window.
+
+    To put a page in front of the human — a sign-in wall, something to review — run \
+    `consoleforge-tab --browser-window <URL>`. That opens a real Chrome window owned by \
+    this tab. It is the one browser action you cannot take for yourself, because your own \
+    browser is headless.
+
+    The app's built-in Safari panel is NOT scriptable — there is no command that navigates \
+    it, and asking the user to paste a URL into it is not the answer. Use --browser-window \
+    for a visible page, or your own headless browser over the MCP for anything you need to \
+    read or act on yourself.
 
     Opening a tab prints its ID: "tab-id: <UUID>". Use this ID with --wait-for-close \
     to monitor when the tab closes. The event JSON includes the close reason \

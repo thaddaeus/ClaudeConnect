@@ -34,7 +34,7 @@ struct SessionEditorView: View {
     var onCancel: () -> Void
 
     private let models = ["", "opus", "opusplan", "sonnet", "haiku", "fable"]
-    private let efforts = ["", "low", "medium", "high", "max"]
+    private let efforts = ["", "low", "medium", "high", "xhigh", "max"]
     private let iconOptions = [
         "terminal", "bolt", "cpu", "server.rack",
         "hammer", "wrench.and.screwdriver", "ant", "ladybug",
