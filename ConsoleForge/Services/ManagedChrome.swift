@@ -225,30 +225,53 @@ final class ManagedChrome {
 
     /// Write the per-tab MCP config. Starts NOTHING.
     ///
-    /// The config names a wrapper script rather than a port, so the browser is started on
-    /// FIRST USE instead of at session launch. A headless Chrome is 100-200MB; one per tab
-    /// at launch is fine for four tabs and indefensible for the fifteen a real day
-    /// involves. Claude Code starts an MCP server lazily, the first time one of its tools
-    /// is called, so the wrapper runs exactly when a browser is actually wanted — see
-    /// scripts/consoleforge-chrome-mcp.
+    /// EVERY tab gets one of these, which is why laziness is not optional. Measured on a
+    /// real machine: one idle headless Chrome is ~984MB of RSS across 7 processes, not the
+    /// 100-200MB this comment used to claim. Fifteen tabs paying that at launch is not a
+    /// tradeoff, it is a broken app.
+    ///
+    /// TWO SHAPES, and which one you get depends on who owns the browser.
+    ///
+    /// DEFAULT — name the real server and let IT launch Chrome, headless, on our profile
+    /// directory. This is lazy for free: `chrome-devtools-mcp` starts its server when the
+    /// session starts (Claude Code does start MCP servers eagerly — verified: one server
+    /// process per open session) but does NOT launch a browser until a tool is actually
+    /// called. Verified the same way: seven servers alive, zero browsers. `--headless` is
+    /// what keeps a window from ever appearing, which was the original complaint.
+    /// The cost of this shape is that Chrome is a child of the MCP server, so `reapOrphans`
+    /// does not own its lifetime — it ends when the session's server does. We still point
+    /// it at OUR profile path, so the pruner reclaims the directory with the session and
+    /// `--browser-window` (a separate `window` profile) is unaffected.
+    ///
+    /// OPT-IN (`usesManagedBrowser`) — name the wrapper, which asks the app to start the
+    /// browser and then hands off. Eager, and app-owned: `reapOrphans` covers it, it dies
+    /// with the tab, and `--browser-info` can report it. A tab that will definitely browse
+    /// pays the cold start once at launch instead of on its first tool call.
+    ///
+    /// The two must never both run: a `--user-data-dir` carries a single-instance lock, so
+    /// the app and the MCP server launching Chrome on the same profile would collide.
+    /// That is exactly why the shape is chosen here, once, and not by both paths at runtime.
     ///
     /// The server is deliberately named `chrome-devtools`, the same as the global entry,
     /// so it SHADOWS it for this session rather than adding a second one.
     ///
     /// Returns the config path for `claude --mcp-config`, or nil if Chrome is not
-    /// installed or the wrapper is missing — in which case the session launches exactly
-    /// as it always did.
-    func writeSessionMCPConfig(tabID: UUID) -> String? {
-        guard Self.binary != nil, let wrapper = Self.wrapperPath else { return nil }
-        let config: [String: Any] = [
-            "mcpServers": [
-                "chrome-devtools": [
-                    "type": "stdio",
-                    "command": wrapper,
-                    "args": [String](),
-                ]
+    /// installed — in which case the session launches exactly as it always did.
+    func writeSessionMCPConfig(tabID: UUID, appOwned: Bool) -> String? {
+        guard Self.binary != nil else { return nil }
+        let server: [String: Any]
+        if appOwned, let wrapper = Self.wrapperPath {
+            server = ["type": "stdio", "command": wrapper, "args": [String]()]
+        } else {
+            server = [
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "chrome-devtools-mcp@latest",
+                         "--headless",
+                         "--userDataDir", Self.profileURL(for: tabID, mode: .headless).path],
             ]
-        ]
+        }
+        let config: [String: Any] = ["mcpServers": ["chrome-devtools": server]]
         let url = Self.mcpConfigURL(for: tabID)
         try? FileManager.default.createDirectory(at: Self.metadataDirectory,
                                                  withIntermediateDirectories: true)
@@ -359,6 +382,42 @@ final class ManagedChrome {
                     kill(entry.pid, SIGTERM)
                 }
             }
+        }
+        reapUnrecordedBrowsers()
+    }
+
+    /// Kill any Chrome running against one of OUR profile directories that no metadata
+    /// file accounts for.
+    ///
+    /// The default MCP shape has chrome-devtools-mcp launch the browser, so the app never
+    /// sees a pid to record. That is fine while the session is alive — the browser ends
+    /// when the session's MCP server does — but it reopens the exact hole the recorded-pid
+    /// scheme was built to close: a child is not killed by its parent dying, so SIGKILLing
+    /// ConsoleForge strands the whole chain, and an unrecorded browser would then be
+    /// invisible to the reaper and live under launchd forever.
+    ///
+    /// Safe to run at launch precisely because of WHEN it runs: no tab has started yet, so
+    /// nothing should legitimately be using one of our profiles. Anything that is, is
+    /// stranded from a previous run. Scoped to this channel's profile root, so beta's
+    /// reaper cannot touch production's browsers.
+    private func reapUnrecordedBrowsers() {
+        let root = Self.profilesDirectory.path
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/ps")
+        p.arguments = ["-eo", "pid=,command="]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return }
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        p.waitUntilExit()
+        for line in out.split(separator: "\n") {
+            guard line.contains(root) else { continue }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let pidString = trimmed.split(separator: " ").first,
+                  let pid = Int32(pidString), pid > 0 else { continue }
+            print("ManagedChrome: reaping unrecorded Chrome pid \(pid) on our profile root")
+            kill(pid, SIGTERM)
         }
     }
 

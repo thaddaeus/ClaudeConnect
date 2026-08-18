@@ -249,7 +249,8 @@ struct ClaudeProcessBuilder {
       --browser-eval SCRIPT    Run JavaScript in that panel and get its value back
       --browser-screenshot [P] Write a PNG of that panel; prints the path
       --browser-scroll N       Scroll it N pixels (negative up), or 'top' / 'bottom'
-      --browser                Give the NEW tab its own headless browser (with --name/--cwd)
+      --browser                Start the new tab's browser at launch instead of on first
+                               use (it gets one either way)
       --browser-window [URL]   Open a real browser WINDOW owned by this tab, for a human
                                to look at or sign in to
       --browser-info           Print this tab's managed-browser ports as JSON
@@ -266,12 +267,13 @@ struct ClaudeProcessBuilder {
     Its console and network activity is also captured for you in the Web Output panel and \
     in web-console/session.jsonl.
 
-    YOUR OWN BROWSER is a headless Chrome this tab can own, for work you do yourself — \
-    testing, scraping, checking a page renders. Use it instead of letting the \
-    chrome-devtools MCP launch one: `consoleforge-tab --browser-info` prints a \
-    `browserUrl` to point `chrome-devtools-mcp --browserUrl` at. A tab only has one if it \
-    was spawned with --browser. It has no window, so when a human needs to SEE something \
-    there — a sign-in wall — `--browser-window <URL>` opens a real Chrome window.
+    YOUR OWN BROWSER is a headless Chrome belonging to this tab, for work you do \
+    yourself — testing, scraping, checking a page renders. The chrome-devtools MCP tools \
+    in this session are ALREADY pointed at it, so just use them; you never need to launch \
+    a browser or pass a --browserUrl. It starts on your first browser tool call and is \
+    headless, so no window appears and no other session's typing is interrupted. When a \
+    human needs to SEE something instead — a sign-in wall, a page to review — \
+    `consoleforge-tab --browser-window <URL>` opens a real Chrome window.
 
     Opening a tab prints its ID: "tab-id: <UUID>". Use this ID with --wait-for-close \
     to monitor when the tab closes. The event JSON includes the close reason \
