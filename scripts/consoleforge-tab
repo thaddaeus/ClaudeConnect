@@ -43,10 +43,11 @@ These print a JSON reply and exit non-zero if the action failed:
   --browser-scroll N       Scroll by N pixels (negative for up), or 'top' / 'bottom'
 
 Browser options — a managed Chrome owned by this tab (a DIFFERENT browser):
-  --browser                Give the new tab its OWN headless browser, which its agent
-                           drives through the chrome-devtools MCP instead of that MCP
-                           launching a Chrome of its own. Off by default: a browser costs
-                           100-200MB and most tabs never need one.
+  --browser                Start this tab's browser at launch, owned by the app, instead
+                           of on first use. Every tab gets its own headless browser and
+                           its chrome-devtools MCP already points at it, so this only
+                           trades ~1GB up front for skipping Chrome's cold start — and
+                           makes the browser app-owned, so --browser-info can see it.
   --browser-window [URL]   Open a real browser WINDOW owned by this tab (for a human to
                            look at or sign in to). The agent's own browser is headless.
   --browser-info           Print this tab's managed-browser ports as JSON, for pointing

@@ -143,13 +143,28 @@ struct TerminalContainerView: View {
             // browser on first use, so an idle tab costs nothing.
             resolveLaunch: { id in
                 guard var launch = store.resolveLaunch(for: id) else { return nil }
-                // Opt-in only. Without this every tab gets a browser at session start —
-                // MCP servers are started with the session, not on first tool use — which
-                // is 100-200MB per tab for something most tabs never touch.
+                // EVERY tab gets this, not just ones spawned with --browser.
+                //
+                // A session cannot arrange it for itself: --mcp-config is read when the
+                // process launches, so by the time a session is alive its chrome-devtools
+                // server is already committed to whatever the global config said — a Chrome
+                // of its own, headed, appearing unasked. Asking the spawner to pass
+                // --browser does not fix it either: the spawner is often a script written
+                // for another purpose (spoke-tab.sh), and a tab must not depend on its
+                // caller to get the thing this app exists to provide. Launch is the only
+                // moment the decision can be made and the app is the only one present.
+                //
+                // This is free because the DEFAULT shape lets chrome-devtools-mcp launch
+                // Chrome itself, and it does not do so until a browser tool is called —
+                // see writeSessionMCPConfig, which documents what was measured.
+                //
+                // `usesManagedBrowser` now selects the app-owned, eager shape rather than
+                // deciding whether a browser is available at all.
+                //
                 // Never override a config the user set themselves.
-                if launch.config.usesManagedBrowser,
-                   launch.config.mcpConfigPath?.isEmpty ?? true,
-                   let path = ManagedChrome.shared.writeSessionMCPConfig(tabID: id) {
+                if launch.config.mcpConfigPath?.isEmpty ?? true,
+                   let path = ManagedChrome.shared.writeSessionMCPConfig(
+                       tabID: id, appOwned: launch.config.usesManagedBrowser) {
                     launch.config.mcpConfigPath = path
                 }
                 return launch

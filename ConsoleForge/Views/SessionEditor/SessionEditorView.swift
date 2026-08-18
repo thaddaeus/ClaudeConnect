@@ -113,7 +113,7 @@ struct SessionEditorView: View {
                             HStack(spacing: 4) {
                                 Toggle("Auto-start on launch", isOn: $session.autoStart)
 
-                                Toggle("Give this session its own browser", isOn: $session.usesManagedBrowser)
+                                Toggle("Start this session's browser at launch", isOn: $session.usesManagedBrowser)
                                     .help("The session's agent drives a headless Chrome owned by this tab, "
                                           + "instead of chrome-devtools-mcp launching a window of its own. "
                                           + "Costs 100-200MB while the session runs, so leave it off for "
