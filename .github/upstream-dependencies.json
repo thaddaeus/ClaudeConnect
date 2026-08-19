@@ -1,7 +1,7 @@
 {
   "_comment": "Tracks upstream interfaces ConsoleForge depends on. The GHA drift-check workflow compares new Claude CLI releases against this file and opens an issue if review is needed.",
   "claude-cli": {
-    "last_known_version": "2.1.109",
+    "last_known_version": "2.1.235",
     "npm_package": "@anthropic-ai/claude-code",
     "permission_modes": [
       "manual",
@@ -28,7 +28,7 @@
       "CONSOLEFORGE_SESSION_NAME"
     ],
     "terminal_protocols": {
-      "kitty_keyboard": "disabled \u2014 stripped in SwiftTermView.swift to prevent arrow key issues"
+      "kitty_keyboard": "disabled — stripped in SwiftTermView.swift to prevent arrow key issues"
     },
     "effort_levels": [
       "low",
