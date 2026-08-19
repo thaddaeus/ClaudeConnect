@@ -95,7 +95,10 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
     init() {}
 
     enum PermissionMode: String, Codable, CaseIterable, Identifiable {
-        case `default` = "default"
+        // The CLI renamed this mode to `manual`; "default" survives only as a
+        // decode alias below, because it is the stored rawValue in every
+        // sessions.json written before now.
+        case manual = "manual"
         case plan = "plan"
         case acceptEdits = "acceptEdits"
         case auto = "auto"
@@ -106,7 +109,7 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
 
         var displayName: String {
             switch self {
-            case .default: return "Default"
+            case .manual: return "Manual"
             case .plan: return "Plan"
             case .acceptEdits: return "Accept Edits"
             case .auto: return "Auto"
@@ -121,6 +124,10 @@ struct SessionConfiguration: Identifiable, Codable, Hashable {
             switch raw {
             case "auto-edit": self = .acceptEdits
             case "full-auto": self = .auto
+            // Renamed upstream. 2.1.235 still accepts `default` as an unlisted alias,
+            // so nothing was broken while we sent it — but the CLI lists `manual`, and a
+            // picker offering a retired name cannot offer the current one.
+            case "default": self = .manual
             default:
                 guard let mode = PermissionMode(rawValue: raw) else {
                     throw DecodingError.dataCorruptedError(
