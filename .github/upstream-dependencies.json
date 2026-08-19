@@ -4,7 +4,7 @@
     "last_known_version": "2.1.109",
     "npm_package": "@anthropic-ai/claude-code",
     "permission_modes": [
-      "default",
+      "manual",
       "plan",
       "acceptEdits",
       "auto",
@@ -28,8 +28,15 @@
       "CONSOLEFORGE_SESSION_NAME"
     ],
     "terminal_protocols": {
-      "kitty_keyboard": "disabled — stripped in SwiftTermView.swift to prevent arrow key issues"
-    }
+      "kitty_keyboard": "disabled \u2014 stripped in SwiftTermView.swift to prevent arrow key issues"
+    },
+    "effort_levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
   },
   "swiftterm": {
     "pinned_commit": "0f2af750fbc4b1c508b82fe863b907d19cca9ff9",
