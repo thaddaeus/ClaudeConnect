@@ -6,6 +6,16 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch: # Allow manual trigger
 
+# The default GITHUB_TOKEN is read-only, which is why this check has never once
+# reported anything: detection worked, `gh issue create` failed with
+# "Resource not accessible by integration (createIssue)", and the job died there.
+# A scheduled run failing silently is worse than no check at all — it reads as
+# "no drift" every week. issues:write to open the report, contents:write for the
+# last step, which commits the new known version.
+permissions:
+  contents: write
+  issues: write
+
 jobs:
   check-claude-cli:
     runs-on: ubuntu-latest
