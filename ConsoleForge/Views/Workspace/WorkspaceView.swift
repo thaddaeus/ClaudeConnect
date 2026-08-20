@@ -306,7 +306,8 @@ struct WorkspaceView: View {
     private func sectionRail(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         SectionRailView(layout: layout,
                         width: resolved.railStripeWidth,
-                        height: size.height)
+                        height: size.height,
+                        parked: Set(resolved.parked.keys))
             .offset(x: size.width - resolved.railStripeWidth)
             .zIndex(13)
     }

@@ -27,6 +27,11 @@ struct SectionRailView: View {
     /// Width of the reserved stripe, straight from the resolver. Never computed here.
     let width: CGFloat
     let height: CGFloat
+    /// Slots the resolver parked off-canvas this pass — user-collapsed AND forced out by
+    /// a row too narrow for the section's floor. The second kind lives only in the
+    /// resolved layout, so without this the rail would show a starved console as if it
+    /// were on screen and its row would collapse it further instead of bringing it back.
+    let parked: Set<SlotID>
 
     /// A rail row is the full width of the stripe by `rowHeight` tall — a 34 × 34pt hit
     /// rectangle. That is bigger in BOTH axes than any control this app already ships
@@ -57,9 +62,9 @@ struct SectionRailView: View {
     // MARK: - Rows
 
     private func row(_ kind: SectionKind) -> some View {
-        let state = layout.railState(kind)
+        let state = layout.railState(kind, parked: parked)
         return Button {
-            layout.toggleVisible(kind)
+            layout.toggleVisible(kind, parked: parked)
         } label: {
             Image(systemName: kind.symbol)
                 .font(.system(size: 14))

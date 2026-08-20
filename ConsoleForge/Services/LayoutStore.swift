@@ -86,9 +86,14 @@ final class LayoutStore {
         case closed
     }
 
-    func railState(_ section: SectionKind) -> RailState {
+    /// A section is off screen in TWO ways and the rail has to tell neither apart: the
+    /// user collapsed it (`isCollapsed`, in the model), or `resolve` FORCED it out
+    /// because its row could not reach the section's floor. The forced one is derived
+    /// per layout pass and deliberately never written back — so the caller passes in the
+    /// resolved parking set, and the rail stops claiming a starved console is on screen.
+    func railState(_ section: SectionKind, parked: Set<SlotID>) -> RailState {
         guard let slot = layout.slot(holding: section) else { return .closed }
-        return slot.isCollapsed ? .collapsed : .visible
+        return (slot.isCollapsed || parked.contains(slot.id)) ? .collapsed : .visible
     }
 
     /// One click on a rail row: put the section on screen, or park it back on the rail.
@@ -97,13 +102,22 @@ final class LayoutStore {
     /// panel — the browser's page, the document's scroll position — so it stays a
     /// deliberate act in a menu or on the header's X. Everything this does is reversible
     /// by clicking the same row again.
-    func toggleVisible(_ section: SectionKind) {
+    func toggleVisible(_ section: SectionKind, parked: Set<SlotID>) {
         guard let slot = layout.slot(holding: section) else {
             open(section)
             return
         }
         if slot.isCollapsed {
             normal(slot.id)
+        } else if parked.contains(slot.id) {
+            // FORCED out: nothing in the model says "collapsed", so un-collapsing it
+            // would change nothing and the row would look dead. What starved it is that
+            // its row has no width to spare, so claim the floor as an explicit pin —
+            // `expand` then scales the pinned neighbours down until it fits. Getting off
+            // a rail has to always succeed; that is the rule the whole control rests on.
+            let floor = minFraction(slot.id)
+            pin(slot.id, fraction: floor)
+            restore(slot.id, minFraction: floor)
         } else {
             collapse(slot.id)
         }
