@@ -114,10 +114,11 @@ struct SessionEditorView: View {
                                 Toggle("Auto-start on launch", isOn: $session.autoStart)
 
                                 Toggle("Start this session's browser at launch", isOn: $session.usesManagedBrowser)
-                                    .help("The session's agent drives a headless Chrome owned by this tab, "
-                                          + "instead of chrome-devtools-mcp launching a window of its own. "
-                                          + "Costs 100-200MB while the session runs, so leave it off for "
-                                          + "sessions that do no web work.")
+                                    .help("Every session already has its own headless browser, and its "
+                                          + "chrome-devtools tools already point at it. This only decides WHEN "
+                                          + "it starts: on now, at launch; off, on the first browser tool call. "
+                                          + "A browser is roughly a gigabyte, so leave this off unless the "
+                                          + "session will certainly browse and you want the cold start done.")
                                 HelpTip(text: "Automatically open this session in a tab when ConsoleForge starts.")
                             }
 
@@ -157,7 +158,7 @@ struct SessionEditorView: View {
 
                             LabeledContent {
                                 Picker("", selection: Binding(
-                                    get: { session.permissionMode ?? .default },
+                                    get: { session.permissionMode ?? .manual },
                                     set: { session.permissionMode = $0 }
                                 )) {
                                     ForEach(SessionConfiguration.PermissionMode.allCases) { mode in
