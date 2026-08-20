@@ -7,6 +7,9 @@ struct TerminalContainerView: View {
     /// needs to reach a tab's PTY too.
     @Environment(TerminalSessionManager.self) private var manager
     @Environment(VoiceController.self) private var voice
+    /// Backing scale of the display this window is on, forwarded to the manager so its
+    /// columns-from-points floors match the grid SwiftTerm will actually build there.
+    @Environment(\.displayScale) private var displayScale
     @State private var tabStates: [UUID: SessionState] = [:]
 
     var body: some View {
@@ -120,10 +123,14 @@ struct TerminalContainerView: View {
     /// size, which is what kicks the initial reconcile — so sessions are created already
     /// sized to the area they will actually occupy.
     private func handleSizeChange(_ size: CGSize) {
+        // The manager judges geometries in COLUMNS, and since SwiftTerm v1.16.0 a
+        // column is only as wide as the display's pixel grid makes it. Hand it the
+        // scale of the screen this window is on before it does that arithmetic.
+        manager.displayScale = displayScale
         // Same floor the manager applies, checked here too: a degenerate geometry must
         // not reach the resize path at all, or sessions would be BORN two columns wide
         // and a resumed history would flood in at that width.
-        guard TerminalMetrics.isUsable(size) else { return }
+        guard TerminalMetrics.isUsable(size, scale: displayScale) else { return }
         manager.setSize(size)
     }
 

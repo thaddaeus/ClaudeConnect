@@ -24,6 +24,14 @@ final class TerminalSessionManager {
     /// placeholder size on first mount (which corrupts the SwiftTerm buffer model).
     private(set) var currentSize = CGSize(width: 800, height: 600)
 
+    /// Backing scale of the display the terminal is on, kept in sync by
+    /// `TerminalContainerView`. Since SwiftTerm v1.16.0 the cell width snaps to the
+    /// nearest DEVICE pixel, so Menlo 11 is 6.5pt at 2x and 7.0pt at 1x — every
+    /// columns-from-points judgement below has to be made against the screen the
+    /// window is actually on, or the degenerate-geometry floor is measured in cells
+    /// that do not exist there.
+    var displayScale: CGFloat = TerminalMetrics.defaultScale
+
     /// True once a real size has been applied. Sessions are created off the back of
     /// this (see `TerminalContainerView.reconcile`), so it deliberately flips on the
     /// SETTLED size, not the first one seen.
@@ -67,10 +75,10 @@ final class TerminalSessionManager {
         // wrapped line permanently — widening again cannot undo it. Anything this
         // small is a container mid-collapse or mid-transition, so the last good size
         // is the correct thing to keep.
-        guard TerminalMetrics.isUsable(size) else {
+        guard TerminalMetrics.isUsable(size, scale: displayScale) else {
             GeometryTrace.shared.record("rejected",
                 "container=\(Int(size.width))×\(Int(size.height)) " +
-                "(\(TerminalMetrics.columns(forWidth: size.width)) cols) — keeping " +
+                "(\(TerminalMetrics.columns(forWidth: size.width, scale: displayScale)) cols) — keeping " +
                 "\(Int(currentSize.width))×\(Int(currentSize.height))")
             if CFDebug.geometry {
                 print("[geom] REJECTED degenerate container=\(Int(size.width))×\(Int(size.height))")
@@ -80,7 +88,7 @@ final class TerminalSessionManager {
         GeometryTrace.shared.noteContainer(size)
         GeometryTrace.shared.record("setSize",
             "container=\(Int(size.width))×\(Int(size.height)) " +
-            "(\(TerminalMetrics.columns(forWidth: size.width)) cols) → debounce")
+            "(\(TerminalMetrics.columns(forWidth: size.width, scale: displayScale)) cols) → debounce")
         // EVERY size is debounced, the first one included. It used to land
         // synchronously so sessions were born at a real size rather than the 800×600
         // placeholder (task 9528) — but the trace showed the window has not settled by
@@ -149,7 +157,7 @@ final class TerminalSessionManager {
     /// stale-width live region that a plain repaint can't fix. `size` is the
     /// container's real bounds, read at call time (not the possibly-stale cached size).
     func resync(to size: CGSize) {
-        guard TerminalMetrics.isUsable(size) else { return }
+        guard TerminalMetrics.isUsable(size, scale: displayScale) else { return }
         resizeDebounce?.cancel()
         resizeDebounce = nil
         pendingSize = nil
@@ -357,7 +365,8 @@ struct TerminalHostView: NSViewRepresentable {
             // geometry only when it is a usable terminal size; otherwise leave the view
             // at the good size it already has and let the next real frameDidChange
             // correct it through the coalesced path.
-            if TerminalMetrics.isUsable(container.bounds.size) {
+            let scale = container.window?.backingScaleFactor ?? TerminalMetrics.defaultScale
+            if TerminalMetrics.isUsable(container.bounds.size, scale: scale) {
                 target.frame = container.bounds
             }
             target.autoresizingMask = []

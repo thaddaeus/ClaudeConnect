@@ -403,6 +403,15 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         // so apps don't discover kitty support and enable it — Claude CLI's
         // option picker doesn't handle kitty key sequences, causing arrow
         // keys to display as raw text like [57419u instead of navigating.
+        //
+        // 57419 is kitty's KP_UP, not Up: macOS sets `.numericPad` on the REGULAR
+        // arrow keys too, so SwiftTerm was encoding them as keypad keys — which
+        // Claude CLI does not map, while it handles ordinary kitty arrows fine.
+        // Upstream fixed that in fa190af9 (shipped in v1.13.0), so this suppression
+        // is now belt-and-braces rather than the only thing standing between the
+        // picker and raw escape text. Kept until a session has actually driven the
+        // picker with kitty enabled; removing it untested trades a working keyboard
+        // for a tidier diff.
         if Self.isKittyKeyboardQueryResponse(data) {
             return
         }

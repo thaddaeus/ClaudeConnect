@@ -11,6 +11,11 @@ struct GeometryDebugOverlay: View {
     @Bindable var trace: GeometryTrace
     let resolved: ResolvedWorkspaceLayout
     let layout: LayoutStore
+    /// The window's backing scale. Since SwiftTerm v1.16.0 the cell width snaps to the
+    /// nearest DEVICE pixel, so the grid this HUD grades against is a function of the
+    /// display the window is on — reading it from the environment is what keeps the
+    /// mismatch warning a real signal rather than a per-display false alarm.
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -62,12 +67,16 @@ struct GeometryDebugOverlay: View {
     /// is rendering at a width the layout did not ask for — that is the bug class this
     /// HUD exists to make visible.
     private var chain: some View {
-        let containerCols = TerminalMetrics.columns(forWidth: trace.container.width)
+        let containerCols = TerminalMetrics.columns(forWidth: trace.container.width,
+                                                    scale: displayScale)
         let mismatch = trace.grid.cols > 0 && containerCols != trace.grid.cols
         return VStack(alignment: .leading, spacing: 2) {
             line("container", "\(Int(trace.container.width))×\(Int(trace.container.height)) px  →  \(containerCols) cols")
             line("SwiftTerm", "\(trace.grid.cols)×\(trace.grid.rows) cols×rows", warn: mismatch)
-            line("cell", String(format: "%.2f × %.2f pt", TerminalMetrics.cellWidth, TerminalMetrics.cellHeight))
+            line("cell", String(format: "%.2f × %.2f pt @%.0fx",
+                                TerminalMetrics.cellWidth(scale: displayScale),
+                                TerminalMetrics.cellHeight(scale: displayScale),
+                                displayScale))
             if mismatch {
                 Text("⚠︎ container and grid disagree — a reflow is pending or was missed")
                     .font(.system(size: 10, design: .monospaced))

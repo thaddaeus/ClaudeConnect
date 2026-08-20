@@ -16,6 +16,10 @@ import AppKit
 /// never animate a slot rect.
 struct WorkspaceView: View {
     @Environment(LayoutStore.self) private var layout
+    /// Backing scale of the display this window is on. SwiftTerm snaps its cell to the
+    /// nearest device pixel, so the live cols × rows readout is only true for the
+    /// screen the splitter is being dragged on.
+    @Environment(\.displayScale) private var displayScale
 
     @State private var browser: BrowserModel?
     /// Lives at workspace scope, not inside the browser: the log outlives any one page
@@ -506,7 +510,8 @@ struct WorkspaceView: View {
         } else if kind == .console {
             // The terminal area is the slot minus the section header and the tab bar.
             let chrome = SectionHeaderView.height + 36
-            text = "\(TerminalMetrics.columns(forWidth: rect.width)) × \(TerminalMetrics.rows(forHeight: max(0, rect.height - chrome)))"
+            text = "\(TerminalMetrics.columns(forWidth: rect.width, scale: displayScale)) × " +
+                   "\(TerminalMetrics.rows(forHeight: max(0, rect.height - chrome), scale: displayScale))"
         } else {
             text = "\(Int(rect.width)) pt"
         }

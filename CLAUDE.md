@@ -197,7 +197,7 @@ feature — *the console must not resize when a browser closes*:
   it carries the section's real header — pin, Collapse/Normal/Full Width, menu — over a
   click-anywhere expand area, so a collapsed panel is somewhere you can act from. A
   22pt strip made those buttons impossible to hit. The console's minimum is a standard
-  **80 columns** (`TerminalMetrics.minimumWidth` — measured from the live font, ≈544pt
+  **80 columns** (`TerminalMetrics.minimumWidth` — measured from the live font, 584pt
   at Menlo 11pt), because output written to wrap at 80 wraps mid-word below that. The
   last remaining tiled slot never collapses. Clicking the rail restores the slot.
   A collapsed section stays in the view tree, **parked off-canvas at a usable width** —
@@ -207,6 +207,21 @@ feature — *the console must not resize when a browser closes*:
 
 `TerminalMetrics` owns the terminal font; `TerminalSession` reads it from there so the
 rendered font and the layout engine's column arithmetic cannot drift.
+
+**A column is not a fixed number of points.** SwiftTerm snaps its cell to the display's
+pixel grid, and since v1.16.0 to the NEAREST device pixel rather than always up — so
+Menlo 11's 6.6226pt advance is a **6.5pt cell at 2x and a 7.0pt cell at 1x**.
+`TerminalMetrics.cellWidth(scale:)` reproduces that arithmetic and every
+columns/rows/isUsable call takes the scale of the screen its window is on
+(`@Environment(\.displayScale)`, or `window?.backingScaleFactor` on the mount path).
+Getting it from the wrong display is a ~7% error — one column in fourteen — and it
+shows up as a container/grid disagreement in the HUD, which is the alarm that is
+supposed to mean something. The layout engine's `minimumWidth` is the exception: it is
+scale-free by construction, so it is built from the WIDEST cell (1x), which can only
+over-reserve. `chrome` (17pt) is a point offset for SwiftTerm's reserved scroller plus
+our inset and is unaffected by any of this. **Re-verify against a fresh geometry trace
+whenever the SwiftTerm pin moves** — this is exactly what the 0f2af750 → v1.19.0 bump
+had to pay for.
 
 **Beta-only geometry instrumentation.** `GeometryTrace` records the whole chain —
 container px → SwiftTerm grid → PTY winsize — including every REJECTED and coalesced
