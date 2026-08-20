@@ -8,11 +8,21 @@ let package = Package(
         .executable(name: "ConsoleForge", targets: ["ConsoleForge"]),
     ],
     dependencies: [
-        // Pinned to commit that fixes kitty keyboard protocol sequences being
-        // misinterpreted as cursor restore (PR #500). Can revert to `from: "1.12.0"`
-        // once a tagged release includes this fix.
+        // Was pinned to the bare revision 0f2af750 for PR #500 (kitty keyboard
+        // sequences misinterpreted as cursor restore); that fix ships in every
+        // tag from v1.13.0 on, so the pin is a release tag again.
+        //
+        // EXACT, never `from:`. SwiftTerm owns the buffer model behind the
+        // permanent-garble class (tasks 9543 / 9487), so a bump is a change to
+        // be verified — `./scripts/geometry-pass.py` on beta — not a floor to
+        // float on. Two things in v1.16.0+ are why that is not paranoia: the
+        // cell width now snaps to the NEAREST device pixel instead of rounding
+        // up (Menlo 11 is 6.5pt at 2x, 7.0pt at 1x — the cell is backing-scale
+        // dependent, and `TerminalMetrics` mirrors that arithmetic), and the
+        // per-cell write path gained semantic/bidi state (~12% slower
+        // insertCharacter in SwiftTerm's own benchmark).
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git",
-                 revision: "0f2af750fbc4b1c508b82fe863b907d19cca9ff9"),
+                 exact: "1.19.0"),
         // Sparkle auto-update framework. Distributed as a prebuilt binary artifact
         // (Sparkle.framework + the generate_keys / generate_appcast tools).
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3"),

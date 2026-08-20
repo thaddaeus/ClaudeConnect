@@ -21,52 +21,85 @@ enum TerminalMetrics {
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
 
-    /// Width of one cell, ROUNDED UP to a whole point.
-    ///
-    /// The rounding is not cosmetic: SwiftTerm lays its grid out on integral cells, so
-    /// Menlo 11pt's 6.6226pt advance becomes a 7pt cell. Using the raw advance made the
-    /// column arithmetic optimistic by ~5%, and the geometry trace proved it — a
-    /// container the layout engine had sized for "80 columns" reported a 75-column grid.
-    /// Every floor derived from this was therefore short of what it promised.
-    static let cellWidth: CGFloat = {
-        let font = NSFont(name: fontName, size: fontSize)
-            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        return ("W" as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
+    /// Backing scale to assume when no window is in hand. A window's own
+    /// `backingScaleFactor` is always preferable — this is the fallback for the
+    /// mount path, where the view may not have joined a window yet.
+    static var defaultScale: CGFloat {
+        NSScreen.main?.backingScaleFactor ?? 2
+    }
+
+    /// The unsnapped advance of the widest ASCII glyph, measured exactly the way
+    /// SwiftTerm measures it (`AppleTerminalView.computeFontDimensions` takes the
+    /// advancement of the "W" glyph on macOS). Menlo 11 → 6.62255859375pt.
+    private static let rawCellWidth: CGFloat = {
+        let font = TerminalMetrics.font
+        return font.advancement(forGlyph: font.glyph(withName: "W")).width
     }()
 
-    static let cellHeight: CGFloat = {
-        let font = NSFont(name: fontName, size: fontSize)
-            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    private static let rawCellHeight: CGFloat = {
+        let font = TerminalMetrics.font
         return (font.ascender - font.descender + font.leading).rounded(.up)
     }()
 
-    /// Slack for SwiftTerm's own insets so the promised columns genuinely fit rather
+    /// Width of one cell on a display of the given backing scale.
+    ///
+    /// The snapping is not cosmetic and it is not ours to choose: SwiftTerm lays its
+    /// grid out on cells snapped to the DEVICE pixel grid, and this has to reproduce
+    /// that arithmetic or every floor derived from it is a promise about a grid that
+    /// does not exist. The geometry trace caught exactly that once — a container the
+    /// layout engine had sized for "80 columns" reported a 75-column grid.
+    ///
+    /// Since SwiftTerm v1.16.0 the snap is to the NEAREST device pixel rather than
+    /// always up, which makes the cell backing-scale dependent for the first time:
+    /// Menlo 11's 6.6226pt advance is a 6.5pt cell at 2x and a 7.0pt cell at 1x.
+    /// Callers holding a view must pass `window?.backingScaleFactor`; a value from
+    /// the wrong display is off by ~7%, which is a whole column every fourteen.
+    static func cellWidth(scale: CGFloat) -> CGFloat {
+        max(1, (rawCellWidth * scale).rounded() / scale)
+    }
+
+    /// Height of one cell. SwiftTerm still rounds this UP to the device pixel, so it
+    /// is 13pt for Menlo 11 at both 1x and 2x — the parameter exists so the two
+    /// halves of the cell keep being derived the same way if that changes.
+    static func cellHeight(scale: CGFloat) -> CGFloat {
+        max(1, (rawCellHeight * scale).rounded(.up) / scale)
+    }
+
+    /// The WIDEST a cell can be across the displays this app can be shown on (1x).
+    ///
+    /// For a floor handed to the layout engine — which is scale-free, a pure value
+    /// type over fractions — this is the only safe choice: reserving space for the
+    /// widest cell can only over-deliver columns on a Retina display, never promise
+    /// a terminal more columns than it is about to get.
+    static let widestCellWidth = cellWidth(scale: 1)
+
+    /// Slack for SwiftTerm's own chrome so the promised columns genuinely fit rather
     /// than landing a cell short.
+    ///
+    /// SwiftTerm computes `cols = Int(getEffectiveWidth(size) / cellWidth)`, and its
+    /// effective width is the view's width less the reserved scroller. 17pt is that
+    /// scroller plus our own inset, and it is a POINT offset — independent of the
+    /// cell size, so it survived the v1.16.0 cell-width change unchanged.
     ///
     /// 17, not 16. The original 16 was calibrated against two grids (544px → 75 cols,
     /// 781px → 109 cols) and both happen to sit mid-cell, where a one-pixel error is
     /// invisible. It only shows when `width - chrome` lands EXACTLY on a cell boundary:
     /// at 744px, 744−16 = 728 = 7×104, so this reported 104 while SwiftTerm's real grid
     /// was 103 — and likewise 583px → 81 against a real 80. Against all eight widths the
-    /// geometry trace has now recorded, 16 misses those two and 17 matches every one.
-    ///
-    /// The error direction mattered for the fix being safe to make: 17 reports FEWER
-    /// columns and makes `minimumWidth` one pixel WIDER, so both moves are conservative —
-    /// the arithmetic can only over-reserve space, never promise a terminal more columns
-    /// than it is about to get. Left wrong, the in-app HUD flags a container/grid
-    /// disagreement at those exact widths, which is a false alarm in the one instrument
-    /// that exists to catch the real thing.
+    /// geometry trace had recorded at the time, 16 missed those two and 17 matched
+    /// every one.
     static let chrome: CGFloat = 17
 
     /// Columns a terminal area of `width` points renders. Used for the live
     /// `cols × rows` readout while a slot splitter is being dragged — the only
-    /// dimension a terminal user actually thinks in.
-    static func columns(forWidth width: CGFloat) -> Int {
-        max(0, Int((width - chrome) / cellWidth))
+    /// dimension a terminal user actually thinks in — and by the geometry HUD, which
+    /// grades this against SwiftTerm's real grid.
+    static func columns(forWidth width: CGFloat, scale: CGFloat = defaultScale) -> Int {
+        max(0, Int((width - chrome) / cellWidth(scale: scale)))
     }
 
-    static func rows(forHeight height: CGFloat) -> Int {
-        max(0, Int(height / cellHeight))
+    static func rows(forHeight height: CGFloat, scale: CGFloat = defaultScale) -> Int {
+        max(0, Int(height / cellHeight(scale: scale)))
     }
 
     /// Narrowest the console may be rendered: 80 columns, plus ONE CELL OF SLACK.
@@ -76,12 +109,16 @@ enum TerminalMetrics {
     /// SwiftTerm reports 215 — measured, not guessed). Asking for 81 cells' worth means
     /// the floor delivers a true 80 even when the estimate is high by one, which is the
     /// whole promise: below 80, output written to wrap at 80 wraps mid-word.
+    ///
+    /// Built from `widestCellWidth`, so this is the same 584pt on every display it was
+    /// before SwiftTerm made the cell scale-dependent; on a 2x display it now buys
+    /// ~87 columns rather than exactly 81. Over-reserving is the harmless direction.
     static var minimumWidth: CGFloat {
-        (cellWidth * CGFloat(standardColumns + 1)).rounded(.up) + chrome
+        (widestCellWidth * CGFloat(standardColumns + 1)).rounded(.up) + chrome
     }
 
     static var minimumHeight: CGFloat {
-        (cellHeight * CGFloat(standardRows)).rounded(.up)
+        (cellHeight(scale: 1) * CGFloat(standardRows)).rounded(.up)
     }
 
     /// Absolute floor for a REFLOW — far below the 80-column layout floor, because
@@ -97,8 +134,8 @@ enum TerminalMetrics {
     static let minimumReflowRows = 4
 
     /// Whether a container size is worth reflowing the terminal to.
-    static func isUsable(_ size: CGSize) -> Bool {
-        columns(forWidth: size.width) >= minimumReflowColumns
-            && rows(forHeight: size.height) >= minimumReflowRows
+    static func isUsable(_ size: CGSize, scale: CGFloat = defaultScale) -> Bool {
+        columns(forWidth: size.width, scale: scale) >= minimumReflowColumns
+            && rows(forHeight: size.height, scale: scale) >= minimumReflowRows
     }
 }
