@@ -222,8 +222,81 @@ class PtyProcess {
         }
     }
 
+    /// End the session's process for good.
+    ///
+    /// A single SIGHUP was not enough, and the failure was silent: the Claude CLI
+    /// installs handlers for both SIGHUP and SIGTERM and keeps running under either —
+    /// measured, not assumed. So closing a tab left its `claude` alive forever, and
+    /// because the CLI registers itself BY NAME for peer messaging, a closed-and-
+    /// reopened tab left two live processes answering to the same name. Messages then
+    /// went to whichever one the registry resolved first, which is how a spoke's
+    /// completion report reached the wrong hub (IDEA Base 990003).
+    ///
+    /// So: escalate, and signal the GROUP rather than the one pid. The child is a
+    /// session leader (POSIX_SPAWN_SETSID at spawn), so its process-group id equals its
+    /// pid and `kill(-pid,)` reaches everything it started — the MCP server and the
+    /// browser under it — instead of orphaning them one level down.
+    ///
+    /// Closing the master is part of the teardown, not a side effect: it hangs up the
+    /// slave, which is the polite way to end a process that is blocked reading its
+    /// terminal. SIGKILL is the floor, not the plan.
     func terminate() {
-        kill(pid, SIGHUP)
+        signalGroup(SIGHUP)
+        // Hang up the terminal as well as signalling it.
+        readSource?.cancel()   // cancel handler closes masterFd
+        readSource = nil
+        PtyProcess.escalate(pid: pid)
+    }
+
+    /// Escalate and reap, captured on the PID ALONE.
+    ///
+    /// Deliberately static and self-free: the session object is usually released the
+    /// moment its tab closes, so anything written as `[weak self]` here simply does not
+    /// run — which is how the first version of this fix ended the process but left a
+    /// zombie behind for every tab ever closed. The work outlives the object because it
+    /// never refers to it.
+    private static func escalate(pid: pid_t) {
+        reapQueue.asyncAfter(deadline: .now() + 1.0) {
+            if reap(pid) { return }
+            if kill(-pid, SIGTERM) != 0 { kill(pid, SIGTERM) }
+            reapQueue.asyncAfter(deadline: .now() + 2.0) {
+                if reap(pid) { return }
+                print("PtyProcess: pid \(pid) ignored SIGHUP and SIGTERM — sending SIGKILL")
+                kill(-pid, SIGKILL)
+                kill(pid, SIGKILL)
+                reapQueue.asyncAfter(deadline: .now() + 0.5) { _ = reap(pid) }
+            }
+        }
+    }
+
+    /// Collect the child if it has exited. Returns true once it is gone for good —
+    /// reaped here, reaped by processMonitor, or never ours to begin with.
+    @discardableResult
+    private static func reap(_ pid: pid_t) -> Bool {
+        var status: Int32 = 0
+        let r = waitpid(pid, &status, WNOHANG)
+        if r == pid { return true }           // we collected it
+        if r < 0 { return true }              // ECHILD: already reaped elsewhere
+        return !isRunning(pid)                // r == 0: still alive, or already a zombie
+    }
+
+    private static let reapQueue = DispatchQueue(label: "com.thaddaeus.consoleforge.pty.reap")
+
+    /// Signal the child's whole process group, falling back to the bare pid if the
+    /// group is gone (which happens if the child died and was reaped between calls).
+    private func signalGroup(_ sig: Int32) {
+        if kill(-pid, sig) != 0 { kill(pid, sig) }
+    }
+
+    /// Alive AND not a zombie. `kill(_:0)` alone answers true for a defunct process,
+    /// which would make the escalation give up exactly when it still has work to do.
+    private static func isRunning(_ pid: pid_t) -> Bool {
+        guard kill(pid, 0) == 0 else { return false }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return false }
+        return info.kp_proc.p_stat != SZOMB
     }
 
     deinit {
