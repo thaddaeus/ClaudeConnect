@@ -10,3 +10,7 @@ DerivedData/
 
 # Agent worktrees (transient)
 .claude/worktrees/
+# Per-machine Claude Code overrides. .claude/commands/ IS tracked —
+# those are the shared workflow, and a spoke cannot read a file that
+# only exists on the hub's disk.
+.claude/settings.local.json
