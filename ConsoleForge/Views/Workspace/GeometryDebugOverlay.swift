@@ -91,7 +91,7 @@ struct GeometryDebugOverlay: View {
             ForEach(SlotID.allCases.filter { layout[$0].section != nil }) { id in
                 let slot = layout[id]
                 let rect = resolved.tiled[id] ?? resolved.floating[id]
-                let state = resolved.collapsed[id] != nil ? "collapsed"
+                let state = resolved.parked[id] != nil ? "collapsed"
                     : (slot.isFloating ? "floating" : "tiled")
                 let geom = rect.map { "\(Int($0.width))×\(Int($0.height)) @\(Int($0.minX)),\(Int($0.minY))" }
                     ?? "parked"

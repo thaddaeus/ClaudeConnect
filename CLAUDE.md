@@ -174,6 +174,31 @@ collapsing or maximising the overlay afterwards cannot move them. Dragging its h
 into another slot re-anchors it to that edge; dragging its inner edge resizes it.
 Full Width on a floating panel just covers the window and leaves the tiles alone.
 
+**The trailing-edge rail is ALWAYS there, and it lists every section** — on screen,
+collapsed, or closed (`SectionRailView`). Without it the default state advertised
+nothing: headers only appear once a second section is open, so a lone console showed no
+header, no rail, and no hint that Safari, Web Output or Documents existed at all — the
+whole feature was reachable only from the menu bar, which you had to already know about.
+One click on a row opens a closed section, parks a visible one, or brings a parked one
+back; the row's own context menu and the sliders button at the foot of the rail carry
+the layout controls, so they never vanish. It is a SHOW/HIDE switch and never a close
+button — closing discards a panel, so that stays a deliberate act on the header's ✕ or
+in a menu.
+
+The rail costs the console **nothing new**: `railStripeWidth` has been a permanently
+reserved gutter since the jump-on-collapse fix, and it is `collapsedRailWidth` (34pt)
+wide whether or not anything is collapsed. That constancy is load-bearing — a rail that
+grew as panels opened would resize the console, which is the exact thing pinning exists
+to prevent. 34pt gives each row a **34 × 34pt** hit rectangle, bigger in both axes than
+any control the app already ships (the section header's are 18×16 and 20×16) and than an
+AppKit push button (21pt). The 22pt rail that failed earlier was 22pt WIDE and carried
+the *whole* header — pin, two size segments, menu, collapse, close — at roughly 22×11pt
+per target; one control per row is a different control. The rail REPLACED the tall
+per-collapsed-section tab rather than coexisting with it (two representations of one
+collapsed section will not fit in 34pt), but it COEXISTS with the per-section header,
+which is still the drag source for moving a section between slots and still carries
+pin-at-current-width — neither survives a 34pt stripe.
+
 Size arithmetic lives in `WorkspaceLayout.resolve(in:)` and is the whole point of the
 feature — *the console must not resize when a browser closes*:
 
@@ -192,14 +217,11 @@ feature — *the console must not resize when a browser closes*:
 - A FLOATING slot contributes nothing to this arithmetic — the tiled layout resolves
   exactly as if that section did not exist.
 - Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.
-- A slot that cannot reach its section's minimum width **collapses to a rail** rather
-  than rendering a useless sliver. The rail is chrome-width (152pt), not a thin strip:
-  it carries the section's real header — pin, Collapse/Normal/Full Width, menu — over a
-  click-anywhere expand area, so a collapsed panel is somewhere you can act from. A
-  22pt strip made those buttons impossible to hit. The console's minimum is a standard
-  **80 columns** (`TerminalMetrics.minimumWidth` — measured from the live font, 584pt
-  at Menlo 11pt), because output written to wrap at 80 wraps mid-word below that. The
-  last remaining tiled slot never collapses. Clicking the rail restores the slot.
+- A slot that cannot reach its section's minimum width **collapses**, rather than
+  rendering a useless sliver — it goes back to being a row in the rail. The console's
+  minimum is a standard **80 columns** (`TerminalMetrics.minimumWidth` — measured from
+  the live font, 584pt at Menlo 11pt), because output written to wrap at 80 wraps
+  mid-word below that. The last remaining tiled slot never collapses.
   A collapsed section stays in the view tree, **parked off-canvas at a usable width** —
   never removed, so its NSView survives, and never reflowed, because the container never
   takes a degenerate size in the first place. Parking at zero width was a trap: it left

@@ -69,7 +69,7 @@ struct WorkspaceView: View {
 
                 reservedGaps(resolved, size)
 
-                collapsedRails(resolved, size)
+                sectionRail(resolved, size)
 
                 splitterHandles(resolved, size)
 
@@ -294,94 +294,22 @@ struct WorkspaceView: View {
         }
     }
 
-    // MARK: - Collapsed rails
+    // MARK: - The rail
 
-    /// Collapsed sections become tabs in one stripe down the RIGHT edge, wherever their
-    /// slot sits — the way an IDE parks its tool windows. The stripe is reserved space
-    /// (see `railStripeWidth`), so nothing is ever drawn underneath a tab and its menu
-    /// button cannot end up clipped by the window edge.
-    @ViewBuilder
-    private func collapsedRails(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
-        if resolved.railStripeWidth > 0 {
-            Rectangle()
-                .fill(Color(nsColor: .underPageBackgroundColor))
-                .frame(width: resolved.railStripeWidth, height: size.height)
-                .overlay(alignment: .leading) { Divider() }
-                .offset(x: size.width - resolved.railStripeWidth)
-                .zIndex(13)
-
-            // Separator between the row bands, drawn only when both bands hold tabs —
-            // it is the cue that the lower group came from the bottom row.
-            if let bandY = resolved.railBandStart[.bottom],
-               resolved.collapsed.keys.contains(where: { $0.row == .top }),
-               resolved.collapsed.keys.contains(where: { $0.row == .bottom }) {
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(width: resolved.railStripeWidth, height: 1)
-                    .offset(x: size.width - resolved.railStripeWidth, y: bandY)
-                    .zIndex(13.5)
-            }
-        }
-        ForEach(SlotID.allCases) { id in
-            if let rect = resolved.collapsed[id], let kind = layout[id].section {
-                VStack(spacing: 6) {
-                    Button {
-                        layout.normal(id)
-                    } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: "chevron.compact.left")
-                                .font(.system(size: 12, weight: .semibold))
-                            Image(systemName: kind.symbol)
-                                .font(.system(size: 13))
-                            Text(kind.title)
-                                .font(.system(size: 10, weight: .medium))
-                                .fixedSize()
-                                .rotationEffect(.degrees(90))
-                                .frame(width: rect.width)
-                                .padding(.vertical, 16)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Expand \(kind.title)")
-
-                    Spacer(minLength: 0)
-
-                    Menu {
-                        SectionLayoutMenu(kind: kind, layout: layout)
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 11))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: rect.width, height: 22)
-                    .help("\(kind.title) layout options")
-                }
-                .padding(.vertical, 8)
-                .foregroundStyle(.secondary)
-                .frame(width: rect.width, height: rect.height)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .padding(.horizontal, 2)
-                .contextMenu { SectionLayoutMenu(kind: kind, layout: layout) }
-                .help(collapsedHelp(kind))
-                .offset(x: rect.minX, y: rect.minY)
-                .zIndex(14)
-            }
-        }
-    }
-
-    private func collapsedHelp(_ kind: SectionKind, in id: SlotID) -> String {
-        "\(kind.title) — collapsed from \(id.title). Click to expand."
-    }
-
-    private func collapsedHelp(_ kind: SectionKind) -> String {
-        let reason = kind == .console
-            ? "narrower than a standard \(TerminalMetrics.standardColumns)-column terminal"
-            : "too narrow to show"
-        return "\(kind.title) is collapsed — \(reason). Click to restore, or use the controls above."
+    /// The trailing-edge rail: ALWAYS present, one row per section, in every state.
+    ///
+    /// It draws into the stripe `resolve` already reserves (`railStripeWidth`), which is
+    /// a constant — so the rail's width does not change as sections open, close or
+    /// collapse, and the console never resizes because of it. This is the whole reason
+    /// the rail may exist at all: it is a repaint of space the layout engine already
+    /// held back, not a new claim on the console's width.
+    private func sectionRail(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+        SectionRailView(layout: layout,
+                        width: resolved.railStripeWidth,
+                        height: size.height,
+                        parked: Set(resolved.parked.keys))
+            .offset(x: size.width - resolved.railStripeWidth)
+            .zIndex(13)
     }
 
     // MARK: - Splitters

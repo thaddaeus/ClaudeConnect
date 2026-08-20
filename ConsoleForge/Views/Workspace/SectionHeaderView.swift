@@ -2,7 +2,14 @@ import SwiftUI
 
 /// The thin strip at the top of each section: a drag handle for moving the section
 /// into another slot, and the layout menu. Only shown once there is more than one
-/// section open (see `LayoutStore.showsSectionChrome`).
+/// section open (see `LayoutStore.showsSectionChrome`) — a lone console still looks
+/// exactly as it did before slots existed.
+///
+/// The header COEXISTS with the always-on rail (`SectionRailView`); the rail did not
+/// replace it. The header is the drag source for moving a section between slots and it
+/// carries pin-at-current-width, both of which need the section's live geometry and a
+/// wide target — neither survives a 34pt stripe. The rail answers "what exists and how
+/// do I get at it"; the header answers "how big is THIS one, and where does it go".
 struct SectionHeaderView: View {
     let kind: SectionKind
     let slot: SlotConfiguration
@@ -269,8 +276,38 @@ struct SlotGapMenu: View {
     }
 }
 
-/// Menu-bar entry point, so the layout is reachable even when the console is the
-/// only open section (in which case no headers are drawn).
+/// The arrangement half of the Layout menu: every section's own controls, the reserved
+/// gaps, and Reset. Shared by the menu bar and by the rail's menu button, so the window
+/// is never a poorer entry point than the menu bar — which is what task 990035 was
+/// about. One definition, two places.
+struct WorkspaceLayoutMenu: View {
+    let layout: LayoutStore
+
+    var body: some View {
+        ForEach(SectionKind.allCases) { kind in
+            Menu(kind.title) {
+                SectionLayoutMenu(kind: kind, layout: layout)
+            }
+        }
+
+        Divider()
+
+        Menu("Reserve a Gap") {
+            ForEach(SlotID.allCases) { id in
+                if layout[id].section == nil {
+                    Menu(id.title) { SlotGapMenu(id: id, layout: layout) }
+                }
+            }
+        }
+
+        Divider()
+
+        Button("Reset Layout") { layout.resetToDefault() }
+    }
+}
+
+/// Menu-bar entry point. The same controls also live in the workspace rail's menu
+/// button (see `SectionRailView`), so they are reachable without the menu bar.
 struct LayoutCommands: Commands {
     let layout: LayoutStore
     let store: SessionStore
@@ -317,25 +354,7 @@ struct LayoutCommands: Commands {
 
             Divider()
 
-            ForEach(SectionKind.allCases) { kind in
-                Menu(kind.title) {
-                    SectionLayoutMenu(kind: kind, layout: layout)
-                }
-            }
-
-            Divider()
-
-            Menu("Reserve a Gap") {
-                ForEach(SlotID.allCases) { id in
-                    if layout[id].section == nil {
-                        Menu(id.title) { SlotGapMenu(id: id, layout: layout) }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button("Reset Layout") { layout.resetToDefault() }
+            WorkspaceLayoutMenu(layout: layout)
 
             // Beta only. Production ships no geometry buffer, no file handle, no HUD.
             if GeometryTrace.isEnabled {
