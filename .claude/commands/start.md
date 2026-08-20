@@ -167,28 +167,28 @@ open. Then stop — the hub does not follow the spoke into the work.
 
 ## Where the spoke stops
 
-**The spoke opens the PR. It does not merge it, and it never releases.** Say so in the
+**The spoke opens the PR. It does not merge it, and it does not release.** Say so in the
 prompt, every time. Put the evidence somewhere durable — a comment on the issue or task —
-because that survives whether or not the hub is still running, and a `SendMessage` to the
-hub by name is a nudge on top of that record, not a substitute for it.
+because that survives whether or not the hub is still running; a `SendMessage` to the hub
+by name is a nudge on top of that record, not a substitute for it.
 
-This is not distrust of the spoke's work; the hub does not re-verify what the spoke
-proved. It is that the last two steps are global and the spoke can only see its own task:
+This is **not** because the spoke's work needs a second opinion. Issue #23's spoke ran the
+geometry pass, used `build.sh` properly, and shipped a correctly signed, notarized,
+stapled v0.9.5 with a valid appcast and the tag on the right commit — verified against the
+artifact, not its own report. The reasons are narrower than that, and both are structural:
 
-* **A release cannot run concurrently.** `scripts/build.sh` cuts a version, a tag, a
-  GitHub release, and regenerates the ONE `appcast.xml` that Sparkle serves to every
-  install. Two spokes finishing minutes apart would race the version number and clobber
-  the feed.
-* **The version is a product decision, not a task decision.** A spoke cannot know whether
-  its change ships alone as a patch or rides with two other merged fixes. Shipping 0.9.1
-  and 0.9.2 hours apart was worse than one release, and only the hub could see that.
-* **Merging leaves the worktree**, which is the whole containment the spoke was given.
-* **The user is in the hub.** Approval given inside a spoke tab is invisible here — that
-  is how PR #11 got re-questioned after it had already been approved in-tab.
+* **A release cannot run concurrently.** `scripts/build.sh` regenerates the ONE
+  `appcast.xml` that every install polls. Two spokes finishing minutes apart would race
+  the version number and clobber the feed. Nothing about either spoke has to be wrong for
+  that to break.
+* **Whether a change warrants a release at all is a product decision.** It needs sight of
+  what else has landed and what is still in flight, which is exactly what a spoke scoped
+  to one ref does not have.
 
-Precedent: issue #23's spoke did excellent work — geometry pass green, root cause of the
-repaint desync found — and merged PR #26 to main on its own, because nothing told it not
-to. The work was right; the boundary was never stated.
+**Merging and releasing are separate decisions, and most merges are neither.** Docs, this
+command file, CI, tests, `.gitignore` — none of it reaches the bundle, which holds only
+the binary, `consoleforge-tab`, `consoleforge-chrome-mcp` and the icon. Do not cut a
+version because a PR merged; cut one when there is user-facing change worth shipping.
 
 ## If a decision surfaces
 
