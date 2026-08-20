@@ -454,10 +454,18 @@ struct ConsoleForgeApp: App {
             config.parentTabID = parentID
         }
 
-        store.openEphemeralTab(config)
+        // Focus follows only if the user is currently ON the tab that's spawning this
+        // one — same rule for the tab selection and for pulling the app to the front.
+        // A tab with no live parent (never had one, or the parent died and the
+        // resolution above left config.parentTabID nil) has no "spawning tab" to be on,
+        // so it opens in the background too rather than defaulting to focus.
+        let shouldFocus = config.parentTabID != nil && store.activeTabID == config.parentTabID
 
-        // Bring ConsoleForge to the front
-        NSApp.activate(ignoringOtherApps: true)
+        store.openEphemeralTab(config, focus: shouldFocus)
+
+        if shouldFocus {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     /// A session asking for a real browser WINDOW — the one thing it cannot do for

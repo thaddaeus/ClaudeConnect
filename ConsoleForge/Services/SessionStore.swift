@@ -306,14 +306,23 @@ class SessionStore {
     }
 
     /// Open an ephemeral tab — persisted to disk but hidden from sidebar.
-    func openEphemeralTab(_ config: SessionConfiguration) {
+    ///
+    /// `focus` defaults to true because every UI-driven caller (⌘⌥N, the tab-bar "New
+    /// Tab in Group", opening a document) is the user directly asking for a tab and
+    /// expects it in front, same as always. The CLI path (`handleOpenTab`) is the one
+    /// caller that passes `focus: false` — it opens a tab from OUTSIDE whatever the user
+    /// is currently looking at, so it computes its own answer to "is the user on the tab
+    /// that's opening this" rather than inheriting this default.
+    func openEphemeralTab(_ config: SessionConfiguration, focus: Bool = true) {
         var session = config
         session.isEphemeral = true
         sessions.append(session)
         if !openTabIDs.contains(session.id) {
             openTabIDs.insert(session.id, at: insertionIndex(for: session))
         }
-        focusTab(session.id)
+        if focus {
+            focusTab(session.id)
+        }
         save()
     }
 
