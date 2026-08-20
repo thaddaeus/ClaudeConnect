@@ -371,19 +371,22 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     static let minSlotWidth: CGFloat = 240
     /// Fallback floor for a row whose sections declare no minimum height.
     static let minRowHeight: CGFloat = 140
-    /// Width of the rail a collapsed section leaves behind.
+    /// Width of the RAIL STRIPE down the right edge — the one constant this whole
+    /// feature rests on.
     ///
-    /// Width of the RAIL STRIPE down the right edge. Every collapsed section — from any
-    /// slot, tiled or floating — becomes a tab in this one stripe, the way an IDE's tool
-    /// windows do. One stripe, not one strip per slot, so collapsing more panels never
-    /// eats more width.
+    /// The stripe is ALWAYS reserved and is always exactly this wide: it holds one row
+    /// per section whether that section is on screen, collapsed, or closed
+    /// (`SectionRailView`). Because the width never varies with what is open, opening or
+    /// closing a panel cannot move the console — the same reason the fractions are of
+    /// the WINDOW rather than of whatever happens to be beside them.
     ///
-    /// The stripe is reserved space: the tiled layout, the gaps and the floating
-    /// overlays all stop at its leading edge, so "full width" means full width of the
-    /// content area and nothing is ever drawn underneath a rail.
+    /// It is reserved space, not an overlay: the tiled layout, the gaps and the floating
+    /// panels all stop at its leading edge, so "full width" means full width of the
+    /// content area and nothing is ever drawn underneath the rail.
+    ///
+    /// 34pt gives each row a 34 × 34pt hit rectangle — see `SectionRailView.rowHeight`
+    /// for why that is enough and why the old 22pt rail was not.
     static let collapsedRailWidth: CGFloat = 34
-    /// Height of one tab in the stripe, stacked from the top.
-    static let collapsedRailHeight: CGFloat = 148
 
     // MARK: - Size arithmetic
 
@@ -557,36 +560,12 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
                                        width: parkedWidth, height: parkedHeight)
         }
 
-        // The stripe: one for the whole grid, but BANDED BY ROW. A collapsed bottom-row
-        // section parks in the lower band, aligned with the row it came from — stacked
-        // in with the top row's tabs there was no way to tell where it had come from.
-        // When the bottom row has no height of its own (everything in it is collapsed),
-        // the band still starts halfway down, so the grouping reads either way.
-        let bandStart: [SlotRow: CGFloat] = {
-            if let topHeight = heights[.top], heights[.bottom] != nil, topHeight > 0 {
-                return [.top: 0, .bottom: topHeight]
-            }
-            return [.top: 0, .bottom: size.height / 2]
-        }()
-        result.railBandStart = bandStart
-
-        let tabs = SlotID.allCases.filter { collapsed.contains($0) || floatingCollapsed.contains($0) }
-        for row in SlotRow.allCases {
-            let inBand = tabs.filter { $0.row == row }
-            guard !inBand.isEmpty else { continue }
-            let start = bandStart[row] ?? 0
-            let end = row == .top ? (bandStart[.bottom] ?? size.height) : size.height
-            let available = max(0, end - start)
-            // Shrink tabs to fit their band rather than letting one band bleed into the
-            // other, which would put the grouping back where it started.
-            let tabHeight = min(WorkspaceLayout.collapsedRailHeight, available / CGFloat(inBand.count))
-            var tabY = start
-            for id in inBand {
-                result.collapsed[id] = CGRect(x: contentWidth, y: tabY,
-                                              width: stripeWidth, height: tabHeight)
-                tabY += tabHeight
-            }
-        }
+        // Collapsed sections used to get a tall tab of their own in the stripe, banded by
+        // the row they came from. The rail now lists every section at a fixed position
+        // whether it is collapsed or not, so a per-collapsed-section rect would be a
+        // SECOND representation of the same thing inside a 34pt gutter. The rail reads
+        // `isCollapsed` off the layout directly; the resolver owes it only the stripe
+        // width, which never changes.
         return result
     }
 
@@ -714,18 +693,14 @@ struct ResolvedWorkspaceLayout: Equatable {
     var floating: [SlotID: CGRect] = [:]
     /// Off-canvas frames for collapsed sections, at a usable width — see `renderFrame`.
     var parked: [SlotID: CGRect] = [:]
-    /// Width of the right-edge rail stripe, 0 when nothing is collapsed. Everything
+    /// Width of the right-edge rail stripe. Always reserved and always the same —
+    /// `WorkspaceLayout.collapsedRailWidth` — so that opening, closing or collapsing a
+    /// section can never change it, and therefore can never move the console. Everything
     /// else is laid out to the left of it.
     var railStripeWidth: CGFloat = 0
-    /// Where each row's band of tabs begins inside the stripe, so a collapsed section
-    /// sits level with the row it came from.
-    var railBandStart: [SlotRow: CGFloat] = [:]
     /// Reserved empty space owned by a pinned, sectionless slot — a hole held open for
     /// a panel that is not there yet, and a drop target that fills it exactly.
     var gaps: [SlotID: CGRect] = [:]
-    /// Rails for slots too narrow to render their section. The section stays alive and
-    /// unresized behind the rail; clicking it restores the slot.
-    var collapsed: [SlotID: CGRect] = [:]
     var splitters: [SplitterPosition] = []
     var rowSplitters: [RowSplitterPosition] = []
     /// Resolved height of each live row; absent rows have none and take no space.

@@ -68,10 +68,46 @@ final class LayoutStore {
     func isFloating(_ section: SectionKind) -> Bool { layout.slot(holding: section)?.isFloating ?? false }
 
     /// Section headers only appear once there is more than one section to arrange —
-    /// a lone console looks exactly as it did before slots existed.
+    /// a lone console looks exactly as it did before slots existed. That intent survives
+    /// task 990035: what was wrong was never the quiet header, it was that NOTHING else
+    /// was on screen either. The always-on rail (`SectionRailView`) now carries the
+    /// discoverability, so the header stays a second-section refinement.
     var showsSectionChrome: Bool { layout.openSectionCount > 1 }
 
     var browserURL: String? { layout.browserURL }
+
+    /// What the always-on rail shows for a section. Three states, because "closed" and
+    /// "collapsed" are genuinely different things — a closed section has been discarded,
+    /// a collapsed one is still loaded and parked off-canvas — and the rail is the only
+    /// place both are visible at once.
+    enum RailState: Equatable {
+        case visible
+        case collapsed
+        case closed
+    }
+
+    func railState(_ section: SectionKind) -> RailState {
+        guard let slot = layout.slot(holding: section) else { return .closed }
+        return slot.isCollapsed ? .collapsed : .visible
+    }
+
+    /// One click on a rail row: put the section on screen, or park it back on the rail.
+    ///
+    /// Deliberately a SHOW/HIDE switch and never a close button. Closing discards a
+    /// panel — the browser's page, the document's scroll position — so it stays a
+    /// deliberate act in a menu or on the header's X. Everything this does is reversible
+    /// by clicking the same row again.
+    func toggleVisible(_ section: SectionKind) {
+        guard let slot = layout.slot(holding: section) else {
+            open(section)
+            return
+        }
+        if slot.isCollapsed {
+            normal(slot.id)
+        } else {
+            collapse(slot.id)
+        }
+    }
 
     // MARK: - Mutations
 
