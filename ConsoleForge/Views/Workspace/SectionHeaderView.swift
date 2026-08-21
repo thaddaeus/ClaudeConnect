@@ -20,6 +20,8 @@ struct SectionHeaderView: View {
     /// Set while this header is the drag source, so the workspace can raise its
     /// slot drop targets. Unused while floating.
     @Binding var draggingSection: SectionKind?
+    @State private var isPickingSlot = false
+
     var body: some View {
         // One drag behaviour in every state. A floating panel is docked to its slot's
         // edge, so dragging its header into another slot RE-ANCHORS it — which is the
@@ -43,11 +45,18 @@ struct SectionHeaderView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
-            pinToggle
-
             sizeBadge
 
             Spacer(minLength: 4)
+
+            placePicker
+
+            // PIN IS A SIZING CONTROL — it fixes the width — so it lives with the other
+            // sizing controls. It used to sit at the far LEFT of the bar with a Spacer
+            // between it and the Normal / Full Width segments, which meant the one
+            // control that decides how wide a panel is was the one you had to hunt for
+            // (task 990039 §3).
+            pinToggle
 
             sizeStateControl
 
@@ -105,23 +114,45 @@ struct SectionHeaderView: View {
     /// window, and the slot keeps that pin when the section is moved out or closed —
     /// so the space it held stays reserved for whatever drops in next.
     private var pinToggle: some View {
-        Button {
-            if slot.isPinned {
+        let column = layout.column(slot.id.column)
+        return Button {
+            if column.isPinned {
                 layout.makeFlexible(slot.id)
             } else {
                 layout.pin(slot.id, fraction: currentFraction)
             }
         } label: {
-            Image(systemName: slot.isPinned ? "pin.fill" : "pin")
+            Image(systemName: column.isPinned ? "pin.fill" : "pin")
                 .font(.system(size: 10))
                 .frame(width: 18, height: 16)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(slot.isPinned ? Color.accentColor : Color.secondary)
-        .help(slot.isPinned
-              ? "Pinned at \(Int((slot.pinnedFraction * 100).rounded()))% of the window — click to make it flexible again"
-              : "Pin \(kind.title) at its current width. The slot keeps the pin when the section leaves, holding the space open.")
+        .foregroundStyle(column.isPinned ? Color.accentColor : Color.secondary)
+        .help(column.isPinned
+              ? "The \(slot.id.column.title) column is pinned at \(Int((column.pinnedFraction * 100).rounded()))% of the window — click to make it flexible again"
+              : "Pin the \(slot.id.column.title) column at this width. It holds that width for the cell above or below too, and keeps it when the panel is closed.")
+    }
+
+    /// The spatial way to move a section: a 2 × 3 picture of the grid rather than a
+    /// list of nine text rows. Hovering a cell says exactly what would be displaced and
+    /// where it would land, so a move is committed with its consequence already on
+    /// screen (task 990039 §2).
+    private var placePicker: some View {
+        Button {
+            isPickingSlot = true
+        } label: {
+            Image(systemName: "square.grid.3x2")
+                .font(.system(size: 10))
+                .frame(width: 20, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Place \(kind.title) — pick a cell of the grid")
+        .popover(isPresented: $isPickingSlot, arrowEdge: .bottom) {
+            SlotGridPicker(kind: kind, layout: layout, isPresented: $isPickingSlot)
+        }
     }
 
     /// How big — Normal or Full Width — with the live state lit. Collapse is NOT a
@@ -175,8 +206,8 @@ struct SectionHeaderView: View {
     private var sizeBadge: some View {
         if slot.isFloating {
             badge("Floating")
-        } else if slot.isPinned {
-            badge("\(Int((slot.pinnedFraction * 100).rounded()))%")
+        } else if layout.column(slot.id.column).isPinned {
+            badge("\(Int((layout.column(slot.id.column).pinnedFraction * 100).rounded()))%")
         }
     }
 
@@ -200,13 +231,17 @@ struct SectionLayoutMenu: View {
 
     var body: some View {
         if let slot = layout.slot(holding: kind) {
-            Menu("Move to") {
+            // Named for what it does to the panel, and each row states the OUTCOME for
+            // whatever is already there — "Top Right — Safari moves to Top Center" —
+            // rather than the mechanism, which is what "swap with Safari" exposed. The
+            // spatial picker in the section header shows the same thing as a picture.
+            Menu("Place in") {
                 ForEach(SlotID.allCases) { target in
                     Button {
                         layout.move(kind, to: target)
                     } label: {
-                        if let occupant = layout[target].section, occupant != kind {
-                            Text("\(target.title) — swap with \(occupant.title)")
+                        if let displaced = layout.displacement(moving: kind, to: target) {
+                            Text("\(target.title) — \(displaced.section.title) moves to \(displaced.destination.title)")
                         } else {
                             Text(target.title)
                         }
@@ -224,8 +259,11 @@ struct SectionLayoutMenu: View {
                     .disabled(layout.sizeState(slot.id) == .maximized)
                 Divider()
                 Button("Flexible") { layout.makeFlexible(slot.id) }
-                    .disabled(!slot.isPinned)
+                    .disabled(!layout.column(slot.id.column).isPinned)
                 Divider()
+                // "Pin at 50%" pins the COLUMN — width is a column property — so the
+                // cell above or below this one is held to the same 50%. The menu name is
+                // unchanged because it is what the geometry harness drives by name.
                 ForEach(Self.pinPresets, id: \.self) { fraction in
                     Button("Pin at \(Int((fraction * 100).rounded()))%") {
                         layout.pin(slot.id, fraction: fraction)
@@ -249,19 +287,21 @@ struct SectionLayoutMenu: View {
     }
 }
 
-/// Controls for a reserved gap — a pinned slot holding space open with nothing in it.
-struct SlotGapMenu: View {
+/// Controls for an EMPTY CELL of the grid: what to put in it, and how wide its column
+/// should be.
+///
+/// This replaced the old reserved-gap menu, because a reserved gap is no longer its own
+/// concept — an empty cell of a live column already holds its space, and "reserved"
+/// simply means that column is pinned with nothing in it.
+struct SlotCellMenu: View {
     let id: SlotID
     let layout: LayoutStore
 
     var body: some View {
-        Text("\(id.title) — reserved at \(Int((layout[id].pinnedFraction * 100).rounded()))%")
-        Divider()
-        ForEach([0.25, 1.0 / 3.0, 0.5], id: \.self) { fraction in
-            Button("Hold \(Int((fraction * 100).rounded()))%") { layout.pin(id, fraction: fraction) }
-        }
-        Divider()
-        Button("Release this gap") { layout.makeFlexible(id) }
+        let column = layout.column(id.column)
+        Text(column.isPinned
+             ? "\(id.title) — \(id.column.title) column held at \(Int((column.pinnedFraction * 100).rounded()))%"
+             : "\(id.title) — \(id.column.title) column, flexible")
         Divider()
         ForEach(SectionKind.allCases) { kind in
             if !layout.isOpen(kind) {
@@ -273,6 +313,23 @@ struct SlotGapMenu: View {
                 Button("Move \(kind.title) here") { layout.move(kind, to: id) }
             }
         }
+        Divider()
+        ColumnWidthMenuItems(column: id.column, layout: layout)
+    }
+}
+
+/// The width controls for one column, shared by the empty-cell menu and the Layout
+/// menu's Columns submenu.
+struct ColumnWidthMenuItems: View {
+    let column: SlotColumn
+    let layout: LayoutStore
+
+    var body: some View {
+        ForEach([0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0], id: \.self) { fraction in
+            Button("Hold \(Int((fraction * 100).rounded()))%") { layout.pin(column, fraction: fraction) }
+        }
+        Button("Flexible") { layout.makeFlexible(column) }
+            .disabled(!layout.column(column).isPinned)
     }
 }
 
@@ -292,10 +349,16 @@ struct WorkspaceLayoutMenu: View {
 
         Divider()
 
-        Menu("Reserve a Gap") {
-            ForEach(SlotID.allCases) { id in
-                if layout[id].section == nil {
-                    Menu(id.title) { SlotGapMenu(id: id, layout: layout) }
+        // Columns are the X axis of the grid and the only place a tiled width is
+        // decided, so they get their own entry rather than hiding behind "reserve a
+        // gap": pinning a column with nothing in it IS reserving the position, and
+        // pinning one that holds a panel is how you stop it moving.
+        Menu("Columns") {
+            ForEach(SlotColumn.allCases) { column in
+                Menu(layout.column(column).isPinned
+                     ? "\(column.title) — \(Int((layout.column(column).pinnedFraction * 100).rounded()))%"
+                     : "\(column.title) — flexible") {
+                    ColumnWidthMenuItems(column: column, layout: layout)
                 }
             }
         }
@@ -366,5 +429,90 @@ struct LayoutCommands: Commands {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             }
         }
+    }
+}
+
+
+/// A 2 × 3 picture of the grid, for placing one section.
+///
+/// The list of nine "Top Left — swap with Console" rows it replaced exposed the
+/// mechanism instead of the intent, and read as a warning rather than a choice (task
+/// 990039 §2). Here the cells are laid out the way the window is, each shows what is in
+/// it, and hovering one spells out what would be displaced and where it would land — so
+/// the consequence is visible BEFORE the click, which is the part that was missing.
+struct SlotGridPicker: View {
+    let kind: SectionKind
+    let layout: LayoutStore
+    @Binding var isPresented: Bool
+
+    @State private var hovered: SlotID?
+
+    private var current: SlotID? { layout.slot(holding: kind)?.id }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Place \(kind.title)")
+                .font(.system(size: 12, weight: .semibold))
+
+            VStack(spacing: 4) {
+                ForEach(SlotRow.allCases) { row in
+                    HStack(spacing: 4) {
+                        ForEach(SlotID.allCases.filter { $0.row == row }) { cell($0) }
+                    }
+                }
+            }
+
+            // One line, always present so the popover does not resize as the pointer
+            // moves across the grid.
+            Text(caption)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .frame(width: 230, height: 26, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+    }
+
+    private var caption: String {
+        guard let hovered else { return "Pick where \(kind.title) should sit." }
+        if hovered == current { return "\(kind.title) is already in \(hovered.title)." }
+        if let displaced = layout.displacement(moving: kind, to: hovered) {
+            return "\(kind.title) → \(hovered.title). \(displaced.section.title) moves to \(displaced.destination.title)."
+        }
+        return "\(kind.title) → \(hovered.title). Nothing else moves."
+    }
+
+    private func cell(_ id: SlotID) -> some View {
+        let occupant = layout[id].section
+        let isCurrent = id == current
+        let isHovered = hovered == id
+        return Button {
+            layout.move(kind, to: id)
+            isPresented = false
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: occupant?.symbol ?? "rectangle.dashed")
+                    .font(.system(size: 13))
+                Text(occupant?.title ?? id.title)
+                    .font(.system(size: 9))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+            .opacity(occupant == nil ? 0.65 : 1)
+            .frame(width: 74, height: 44)
+            .background(isHovered ? Color.accentColor.opacity(0.15) : Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 5))
+            .overlay {
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(isCurrent ? Color.accentColor : Color(nsColor: .separatorColor),
+                                  style: StrokeStyle(lineWidth: isCurrent ? 1.5 : 1,
+                                                     dash: occupant == nil ? [4, 3] : []))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isCurrent)
+        .onHover { hovered = $0 ? id : (hovered == id ? nil : hovered) }
+        .accessibilityLabel("\(id.title)\(occupant.map { ", holding \($0.title)" } ?? ", empty")")
     }
 }

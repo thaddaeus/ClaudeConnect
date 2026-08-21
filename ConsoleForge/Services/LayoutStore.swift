@@ -5,16 +5,23 @@ import SwiftUI
 /// workspace can show it rather than letting a section vanish without warning.
 enum BoundaryFeedback: Equatable {
     case free
-    /// Sitting on a section's minimum width. The drag is clamped here.
-    case atMinimum(SlotID)
-    /// Dragged far enough past the minimum that releasing will collapse it.
-    case willCollapse(SlotID)
+    /// Sitting on the minimum width of the sections named here. The drag is clamped.
+    case atMinimum(Set<SlotID>)
+    /// Dragged far enough past the minimum that releasing will collapse them.
+    case willCollapse(Set<SlotID>)
 
-    var slot: SlotID? {
+    /// A SET, because a column boundary governs every cell in the column — dragging it
+    /// shut takes both rows with it. A float-edge drag names exactly one.
+    var slots: Set<SlotID> {
         switch self {
-        case .free: nil
-        case .atMinimum(let id), .willCollapse(let id): id
+        case .free: []
+        case .atMinimum(let ids), .willCollapse(let ids): ids
         }
+    }
+
+    var isCollapsing: Bool {
+        if case .willCollapse = self { return true }
+        return false
     }
 }
 
@@ -39,9 +46,30 @@ final class LayoutStore {
     @ObservationIgnored var workspaceWidth: CGFloat = 1200
     @ObservationIgnored var sectionMinWidths: [SectionKind: CGFloat] = [:]
 
+    /// The floor a single CELL's section needs, as a fraction of the window. Used for
+    /// floating panels, which are not members of the grid.
     func minFraction(_ id: SlotID) -> Double {
         let min = layout[id].section.flatMap { sectionMinWidths[$0] } ?? WorkspaceLayout.minSlotWidth
         return Double(min / max(workspaceWidth, 1))
+    }
+
+    /// The floor a COLUMN needs: the widest minimum of the sections currently in it,
+    /// because one width has to serve every cell. An empty column falls back to the
+    /// generic slot floor.
+    func minFraction(_ column: SlotColumn) -> Double {
+        let points = layout.slots(in: column).compactMap(\.section)
+            .map { sectionMinWidths[$0] ?? WorkspaceLayout.minSlotWidth }.max()
+            ?? WorkspaceLayout.minSlotWidth
+        return Double(points / max(workspaceWidth, 1))
+    }
+
+    /// Sections in this column that a width change would act on — what a boundary drag
+    /// clamps against and what releasing past the floor would collapse.
+    func liveSlots(in column: SlotColumn) -> Set<SlotID> {
+        Set(SlotID.allCases.filter {
+            $0.column == column && layout[$0].section != nil
+                && !layout[$0].isFloating && !layout[$0].isCollapsed
+        })
     }
 
     private static var storageURL: URL {
@@ -115,7 +143,7 @@ final class LayoutStore {
             // its row has no width to spare, so claim the floor as an explicit pin —
             // `expand` then scales the pinned neighbours down until it fits. Getting off
             // a rail has to always succeed; that is the rule the whole control rests on.
-            let floor = minFraction(slot.id)
+            let floor = minFraction(slot.id.column)
             pin(slot.id, fraction: floor)
             restore(slot.id, minFraction: floor)
         } else {
@@ -125,8 +153,23 @@ final class LayoutStore {
 
     // MARK: - Mutations
 
+    /// What a move would DISPLACE, and where that panel would end up.
+    ///
+    /// One section per slot is the rule, so moving into an occupied cell sends its
+    /// occupant to the cell you came from. The UI states that as an outcome — "Safari
+    /// moves to Top Center" — rather than as the mechanism ("swap with Safari"), which
+    /// described the implementation and read as a warning (task 990039 §2). Returns nil
+    /// when the target is empty and nothing is disturbed.
+    func displacement(moving section: SectionKind, to target: SlotID)
+        -> (section: SectionKind, destination: SlotID)? {
+        guard let source = layout.slot(holding: section), source.id != target,
+              let occupant = layout[target].section, occupant != section else { return nil }
+        return (occupant, source.id)
+    }
+
     /// Move a section into `target`. If another section already holds that slot the
-    /// two swap, so a move never silently closes anything.
+    /// two trade places, so a move never silently closes anything — see
+    /// `displacement(moving:to:)` for how that is shown before it happens.
     func move(_ section: SectionKind, to target: SlotID) {
         guard let source = layout.slot(holding: section), source.id != target else { return }
         let displaced = layout[target].section
@@ -135,12 +178,14 @@ final class LayoutStore {
         if displaced?.canFloat == false { layout[source.id].isFloating = false }
         if layout[source.id].section == nil {
             layout[source.id].isFloating = false
-            // Moving a panel is repositioning it, not reserving where it used to be —
-            // leaving the vacated slot pinned would strand a phantom gap and shove
-            // everything else sideways. Closing a pinned section still holds its space
-            // (see `close`); that is the deliberate way to keep a hole.
-            layout[source.id].isPinned = false
             layout[source.id].isCollapsed = false
+            // Moving a panel is repositioning it, not reserving where it used to be — so
+            // if the move emptied its COLUMN outright, the column releases its pin
+            // rather than stranding a phantom reserved strip that shoves everything
+            // sideways. Closing a pinned section still holds its space (see `close`);
+            // that is the deliberate way to keep a hole. A column that still holds
+            // something keeps its width, because the remaining cell needs it.
+            if layout.isEmpty(source.id.column) { layout[source.id.column].isPinned = false }
         }
         commit()
     }
@@ -156,12 +201,15 @@ final class LayoutStore {
         commit()
     }
 
+    /// Closing DISCARDS the panel but HOLDS ITS SPACE. A pinned column keeps its
+    /// fraction with nothing in it — that is what stops the console resizing when a
+    /// browser closes, and it is now simply what a pinned column does rather than a
+    /// separate "reserved gap" concept.
     func close(_ section: SectionKind) {
         guard section.isClosable, let slot = layout.slot(holding: section) else { return }
-        // Keep the slot's own size/display settings — reopening lands back in the same
-        // arrangement — and only vacate it.
         layout[slot.id].section = nil
         layout[slot.id].isFloating = false
+        layout[slot.id].isCollapsed = false
         commit()
     }
 
@@ -183,16 +231,31 @@ final class LayoutStore {
         }
     }
 
-    func pin(_ id: SlotID, fraction: Double) {
-        layout[id].isPinned = true
-        layout[id].pinnedFraction = min(max(fraction, WorkspaceLayout.minPinnedFraction), 1.0)
+    /// Pinning a section pins ITS COLUMN — width is a column property, so "hold this
+    /// panel at 40%" and "hold this column at 40%" are the same statement. The cell
+    /// under it (or over it) is held to the same width, which is what makes the grid a
+    /// grid.
+    func pin(_ id: SlotID, fraction: Double) { pin(id.column, fraction: fraction) }
+
+    func pin(_ column: SlotColumn, fraction: Double) {
+        layout[column].isPinned = true
+        layout[column].pinnedFraction = min(max(fraction, WorkspaceLayout.minPinnedFraction), 1.0)
         commit()
     }
 
-    func makeFlexible(_ id: SlotID) {
-        layout[id].isPinned = false
+    func makeFlexible(_ id: SlotID) { makeFlexible(id.column) }
+
+    func makeFlexible(_ column: SlotColumn) {
+        layout[column].isPinned = false
         commit()
     }
+
+    func isPinned(_ id: SlotID) -> Bool { layout[id.column].isPinned }
+    func pinnedFraction(_ id: SlotID) -> Double { layout[id.column].pinnedFraction }
+    /// How the column behind a slot is sized. A named accessor rather than a second
+    /// `subscript` overload: `SlotID` and `SlotColumn` are both string enums, and the
+    /// pair made every `layout[$0]` inside a closure ambiguous.
+    func column(_ column: SlotColumn) -> ColumnConfiguration { layout[column] }
 
     func setFloating(_ id: SlotID, _ floating: Bool) {
         guard layout[id].section?.canFloat == true else { return }
@@ -212,12 +275,11 @@ final class LayoutStore {
 
         var feedback = BoundaryFeedback.free
         if fraction < floor - overshoot {
-            feedback = .willCollapse(id)
+            feedback = .willCollapse([id])
         } else if fraction <= floor {
-            feedback = .atMinimum(id)
+            feedback = .atMinimum([id])
         }
-        layout[id].isPinned = true
-        layout[id].pinnedFraction = min(max(fraction, floor), 1.0)
+        layout[id].floatingFraction = min(max(fraction, floor), 1.0)
         commit()
         return feedback
     }
@@ -228,28 +290,33 @@ final class LayoutStore {
     /// touches the floor.
     static let collapseOvershoot: CGFloat = 56
 
-    /// Drag of the boundary between two adjacent tiled slots. The leading slot becomes
-    /// pinned at the dragged fraction (that is what a splitter means); a trailing slot
-    /// that is *also* pinned gives up exactly what the leading one gained, so the pair
-    /// keeps its combined share and nothing beyond the boundary moves.
+    /// Drag of the boundary between two adjacent live COLUMNS. The leading column
+    /// becomes pinned at the dragged fraction (that is what a splitter means); a
+    /// trailing column that is *also* pinned gives up exactly what the leading one
+    /// gained, so the pair keeps its combined share and nothing beyond the boundary
+    /// moves.
     ///
-    /// Neither section is ever laid out below its minimum: the drag CLAMPS there.
-    /// Dragging further returns `.willCollapse`, and it is the caller's release that
-    /// commits the collapse — nothing disappears mid-gesture.
+    /// One drag, both rows — the boundary is the column's, so the cells above and below
+    /// it change together. That is the grid, and it is why there is no way to drag the
+    /// two halves of a column into disagreeing widths.
+    ///
+    /// No section is ever laid out below its minimum: the drag CLAMPS at the widest
+    /// floor in the column. Dragging further returns `.willCollapse`, and it is the
+    /// caller's release that commits the collapse — nothing disappears mid-gesture.
     @discardableResult
-    func resizeBoundary(leading: SlotID, trailing: SlotID, leadingFraction: Double,
-                        trailingFraction: Double?, windowWidth: CGFloat,
-                        leadingMin: CGFloat, trailingMin: CGFloat) -> BoundaryFeedback {
+    func resizeBoundary(leading: SlotColumn, trailing: SlotColumn,
+                        leadingFraction: Double, trailingFraction: Double?,
+                        windowWidth: CGFloat) -> BoundaryFeedback {
         let width = max(windowWidth, 1)
-        let leadFloor = max(Double(leadingMin / width), WorkspaceLayout.minPinnedFraction)
-        let trailFloor = max(Double(trailingMin / width), WorkspaceLayout.minPinnedFraction)
+        let leadFloor = max(minFraction(leading), WorkspaceLayout.minPinnedFraction)
+        let trailFloor = max(minFraction(trailing), WorkspaceLayout.minPinnedFraction)
         let overshoot = Double(Self.collapseOvershoot / width)
 
         var feedback = BoundaryFeedback.free
         if leadingFraction < leadFloor - overshoot {
-            feedback = .willCollapse(leading)
+            feedback = .willCollapse(liveSlots(in: leading))
         } else if leadingFraction <= leadFloor {
-            feedback = .atMinimum(leading)
+            feedback = .atMinimum(liveSlots(in: leading))
         }
 
         guard let trailingFraction else {
@@ -262,9 +329,9 @@ final class LayoutStore {
 
         let total = leadingFraction + trailingFraction
         if total - leadingFraction < trailFloor - overshoot {
-            feedback = .willCollapse(trailing)
+            feedback = .willCollapse(liveSlots(in: trailing))
         } else if total - leadingFraction <= trailFloor, case .free = feedback {
-            feedback = .atMinimum(trailing)
+            feedback = .atMinimum(liveSlots(in: trailing))
         }
 
         // Both floors have to fit inside the pair's combined share; if they don't,
@@ -278,6 +345,16 @@ final class LayoutStore {
         layout[trailing].pinnedFraction = max(total - newLeading, WorkspaceLayout.minPinnedFraction)
         commit()
         return feedback
+    }
+
+    /// Commit what a boundary or float-edge drag was warning about: hide every section
+    /// the feedback named. A column boundary names both of its cells, because dragging
+    /// a column shut closes the column.
+    func collapse(_ ids: Set<SlotID>) {
+        guard !ids.isEmpty else { return }
+        for id in ids where layout[id].section != nil { layout[id].isCollapsed = true }
+        if let maximized = maximizedSlot, ids.contains(maximized) { maximizedSlot = nil }
+        commit()
     }
 
     // MARK: - Collapse / Normal / Maximize
@@ -317,10 +394,13 @@ final class LayoutStore {
         if restorePoint == nil { restorePoint = layout }
         layout[id].isCollapsed = false
         if layout[id].isFloating {
-            layout[id].isPinned = true
-            layout[id].pinnedFraction = 1.0
+            layout[id].floatingFraction = 1.0
         } else {
-            layout[id].isPinned = false
+            // Full width means "take the whole content area", so its column goes
+            // flexible AND every other column releases its pin — a reserved strip left
+            // pinned would hold a hole open across a section that is meant to be filling
+            // the window. `normal` restores all of it from the restore point.
+            for column in SlotColumn.allCases { layout[column].isPinned = false }
             for slot in layout.slots where slot.id != id && slot.section != nil && !slot.isFloating {
                 layout[slot.id].isCollapsed = true
             }
@@ -343,7 +423,7 @@ final class LayoutStore {
         }
         restorePoint = nil
         maximizedSlot = nil
-        restore(id, minFraction: minFraction(id))
+        restore(id, minFraction: layout[id].isFloating ? minFraction(id) : minFraction(id.column))
     }
 
     /// Bring a collapsed slot back at the size it was collapsed at. The arithmetic

@@ -65,11 +65,11 @@ def _ref(path):
 def gesture(*path, label=None, settle=SETTLE, prefix=False):
     """Click Layout ▸ … by name.
 
-    `prefix` matches on the start of the item's name, which is required for "Move to":
-    an OCCUPIED target renders as "Top Left — swap with Console", so an exact-name click
-    fails — and a swap is the most disruptive move there is, since two sections change
-    slot at once. The first version of this harness silently skipped every swap for
-    exactly that reason.
+    `prefix` matches on the start of the item's name, which is required for "Place in":
+    an OCCUPIED target renders as "Top Left — Console moves to Top Right", so an
+    exact-name click fails — and a move into an occupied cell is the most disruptive one
+    there is, since two sections change slot at once. The first version of this harness
+    silently skipped every one of them for exactly that reason.
 
     A miss is REPORTED, never silently passed over: a step that did not happen must not
     look like a step that passed.
@@ -126,11 +126,15 @@ def run():
         gesture("Documents", "Size", f"Pin at {pct}", label=f"pin Documents at {pct}")
     gesture("Documents", "Size", "Flexible", label="Documents → Flexible")
 
-    print("\nB — moves, including swaps into occupied slots")
-    for section, slot in (("Documents", "Bottom Center"), ("Documents", "Top Left"),
+    print("\nB — moves, including into occupied cells and down the grid")
+    # Bottom Right and Bottom Left are the task-990039 cases: a column is shared down
+    # the rows, so placing a panel in the bottom row changes the TOP row's widths. Both
+    # directions have to be a gesture-explained reflow and nothing more.
+    for section, slot in (("Documents", "Bottom Center"), ("Documents", "Bottom Right"),
+                          ("Documents", "Bottom Left"), ("Documents", "Top Left"),
                           ("Documents", "Top Center"), ("Safari", "Top Left"),
                           ("Documents", "Top Right"), ("Console", "Top Center")):
-        gesture(section, "Move to", slot, label=f"{section} → {slot}", prefix=True)
+        gesture(section, "Place in", slot, label=f"{section} → {slot}", prefix=True)
 
     print("\nC — float / dock (must not move the tiled console)")
     for s in ("Documents", "Safari"):

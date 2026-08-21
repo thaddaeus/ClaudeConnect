@@ -95,8 +95,11 @@ struct GeometryDebugOverlay: View {
                     : (slot.isFloating ? "floating" : "tiled")
                 let geom = rect.map { "\(Int($0.width))×\(Int($0.height)) @\(Int($0.minX)),\(Int($0.minY))" }
                     ?? "parked"
-                line(id.rawValue,
-                     "\(slot.section?.title ?? "—")  \(state)  \(slot.isPinned ? "pin \(Int(slot.pinnedFraction * 100))%" : "flex")  \(geom)")
+                let column = layout.column(id.column)
+                let size = slot.isFloating
+                    ? "float \(Int(slot.floatingFraction * 100))%"
+                    : (column.isPinned ? "col pin \(Int(column.pinnedFraction * 100))%" : "col flex")
+                line(id.rawValue, "\(slot.section?.title ?? "—")  \(state)  \(size)  \(geom)")
             }
         }
     }
