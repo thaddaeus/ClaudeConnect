@@ -172,9 +172,28 @@ final class LayoutStore {
     /// `displacement(moving:to:)` for how that is shown before it happens.
     func move(_ section: SectionKind, to target: SlotID) {
         guard let source = layout.slot(holding: section), source.id != target else { return }
-        let displaced = layout[target].section
+        // Collapsed/floating are how a SECTION is being shown, not facts about the cell
+        // it happens to sit in — so they travel WITH it. Leaving them on the cell meant a
+        // swap handed each section the other's presentation: move a visible panel onto a
+        // parked one and the arriving panel went dark while the parked one popped into
+        // view, which is exactly backwards and looked like the move had failed.
+        let incoming = layout[source.id]
+        let outgoing = layout[target]
+        let displaced = outgoing.section
+
         layout[target].section = section
+        layout[target].isCollapsed = incoming.isCollapsed
+        layout[target].isFloating = incoming.isFloating
+        layout[target].floatingFraction = incoming.floatingFraction
+
         layout[source.id].section = displaced
+        layout[source.id].isCollapsed = displaced == nil ? false : outgoing.isCollapsed
+        layout[source.id].isFloating = displaced == nil ? false : outgoing.isFloating
+        layout[source.id].floatingFraction = outgoing.floatingFraction
+
+        // A section that cannot float must never inherit floating from the cell it
+        // arrives in, or from the one it leaves behind.
+        if section.canFloat == false { layout[target].isFloating = false }
         if displaced?.canFloat == false { layout[source.id].isFloating = false }
         if layout[source.id].section == nil {
             layout[source.id].isFloating = false
