@@ -1,0 +1,38 @@
+name: Tests
+
+# The mechanical floor. It cannot catch "the tests miss a permutation" — v0.9.7 shipped
+# a bug past 28 assertions and a green geometry pass — but it does catch the failure this
+# repo actually had for its whole life, which is no tests running at all.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      # A suite that runs zero tests must FAIL, not pass quietly. Earned the hard way:
+      # geometry-pass.py's first run compared zero grid pushes because the beta had no
+      # open tabs, and a check that measures nothing looks exactly like a check that
+      # passed. Any green here must mean assertions actually executed.
+      - name: Refuse a silent pass
+        run: |
+          set -euo pipefail
+          COUNT=$(swift test --list-tests 2>/dev/null | grep -c . || echo 0)
+          echo "discovered tests: $COUNT"
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::No tests were discovered — a green run here would mean nothing."
+            exit 1
+          fi

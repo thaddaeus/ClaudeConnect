@@ -42,5 +42,14 @@ let package = Package(
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
         ),
+        // Tier 1 of the test story (see CLAUDE.md "Testing"). Reaches the model with
+        // `@testable import` — an executable target IS testable, which is why the
+        // absence of tests here was never a technical limit.
+        .testTarget(
+            name: "ConsoleForgeTests",
+            dependencies: ["ConsoleForge"],
+            path: "Tests/ConsoleForgeTests",
+            resources: [.copy("../Fixtures")]
+        ),
     ]
 )

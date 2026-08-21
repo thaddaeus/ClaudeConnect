@@ -1,0 +1,8 @@
+{
+  "browserURL": "https://example.com",
+  "slots": [
+    {"id": "left", "section": "console", "isPinned": true, "pinnedFraction": 0.5, "isCollapsed": false, "isFloating": false},
+    {"id": "center", "section": "browser", "isPinned": false, "pinnedFraction": 0.4, "isCollapsed": false, "isFloating": false},
+    {"id": "right", "isPinned": false, "pinnedFraction": 0.4, "isCollapsed": false, "isFloating": false}
+  ]
+}

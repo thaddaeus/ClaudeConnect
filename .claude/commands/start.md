@@ -153,6 +153,9 @@ the spoke will touch something outside its worktree.
 5. Where to stop — see below. This one is not optional and not inferable: a spoke
    with `bypassPermissions` and a green test run will merge its own PR unless told
    not to, because from inside the worktree that looks like finishing the job.
+6. **Tests are part of the change, not a follow-up.** State it in the prompt every time;
+   see "Tests ship with the work" below. Documenting it in CLAUDE.md is not enough on its
+   own — the no-merge rule only started holding once it was in the launch prompt.
 
 Do **not** restate process rules, build instructions, or release steps — those live in
 `CLAUDE.md` and the project memories, which the spoke reads on its own. Restated process
@@ -164,6 +167,27 @@ Which ref resolved, the branch, the model + effort you picked and why, and that 
 open. Then stop — the hub does not follow the spoke into the work.
 
 ---
+
+## Tests ship with the work
+
+Put this in the prompt, in these terms:
+
+* **A new feature lands with tests whose names are its acceptance criteria.** The criteria
+  are the list — not a paraphrase of it. If a criterion has no test, it is not done.
+* **A bug fix lands with a test that FAILS without the fix.** Write it, watch it fail, then
+  fix. Anything else proves only that the happy path works.
+* **A change to existing behaviour updates that behaviour's existing tests** in the same PR.
+  A test that had to be deleted to make a change pass is a finding to report, not a chore.
+* **Say which tier.** `swift test` for model and logic; the live harnesses in `scripts/`
+  for anything touching layout, terminal sizing or the browser lifecycle. Both, when the
+  change spans them. `Tests/Fixtures/` is shared — prefer adding a named fixture over
+  hand-rolling state inside a test.
+
+Why it needs restating per spoke rather than living only in CLAUDE.md: task 990039 had a
+green geometry pass, 28 resolver assertions and a written acceptance list, and still
+shipped a bug in the first permutation a user tried — because every check moved sections
+between EMPTY cells and nobody had written the occupied-target case down. Infrastructure
+was not the gap; the enumeration was.
 
 ## Where the spoke stops
 
