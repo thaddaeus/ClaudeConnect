@@ -119,33 +119,48 @@ export DEV_ID_APPLICATION="Developer ID Application: ..."
 ## Workspace slot layout
 
 The detail area is a **slot container** (`Views/Workspace/WorkspaceView.swift`), not a
-single pane. SLOTS are the cells of a **2 × 3 grid** — rows `top`/`bottom` (the Y axis)
-× columns `left`/`center`/`right` (the X axis); SECTIONS are movable content dropped
-into them. `SlotID` stays a flat `String` enum (`topLeft` … `bottomRight`) because its
-raw values are `layout.json` keys; pre-Y files wrote `left`/`center`/`right` and decode
-into the top row via `SlotID.init(legacy:)`.
+single pane. SLOTS are the cells of a **real 2 × 3 grid** — rows `top`/`bottom` (the Y
+axis) × columns `left`/`center`/`right` (the X axis); SECTIONS are movable content
+dropped into them. `SlotID` stays a flat `String` enum (`topLeft` … `bottomRight`)
+because its raw values are `layout.json` keys; pre-Y files wrote `left`/`center`/`right`
+and decode into the top row via `SlotID.init(legacy:)`.
 
-**Pinning is a WIDTH concept only — rows have no pinned/flexible switch.** A lone row
-FILLS the height; height is only constrained once a second row sits under the first, and
-then `RowConfiguration.heightFraction` is how they split it (the row splitter sets it).
-The X arithmetic below runs independently *inside* each row. A row is floored at the
-tallest minimum its sections declare — the console's is 24 terminal rows, the companion
-to its 80-column width floor — and when floors overflow, the excess comes off the rows
-with SLACK above their own floor, never by scaling everything down (that would push a
-floored row back under its minimum). Sections are named by
+**The grid is real: a COLUMN owns one x and one width for the whole window** (task
+990039). `bottomRight` is genuinely under `topRight`, at the same width. This document
+used to claim a 2 × 3 grid and then, forty lines later, that "the X arithmetic runs
+independently inside each row" — and the code did the second thing: each row packed its
+occupied slots from x = 0 and skipped the empty ones, so a panel dropped in `bottomRight`
+began at the LEFT edge and, alone in its row, swallowed the whole width. The names
+promised a grid nobody had built, which is how it survived a phase unnoticed. Width now
+lives in `ColumnConfiguration` (the X twin of `RowConfiguration`) and never on a cell.
+
+**Pinning is a WIDTH concept, and width is a COLUMN property — rows have no
+pinned/flexible switch and neither does an individual cell.** A lone row FILLS the
+height; height is only constrained once a second row sits under the first, and then
+`RowConfiguration.heightFraction` is how they split it (the row splitter sets it). A row
+is floored at the tallest minimum its VISIBLE sections declare — the console's is 24
+terminal rows, the companion to its 80-column width floor — and when floors overflow, the
+excess comes off the rows with SLACK above their own floor, never by scaling everything
+down (that would push a floored row back under its minimum). Sections are named by
 ENGINE, not by role — `.browser` displays as **Safari** (the in-app WKWebView), so
 Phase C's managed Chrome can sit beside it without either going ambiguous. Raw values
 are the `layout.json` persistence keys; never rename them.
 Layout is per-**window**, not per-tab — switching console tabs never rearranges it.
 Persisted to `layout.json` beside `sessions.json`, so a bad layout can be deleted
-without touching sessions.
+without touching sessions. `layout.json` gained a `columns` key; a file without one is a
+pre-column layout, and each pinned SLOT's fraction is lifted onto its column on decode so
+a saved arrangement keeps the widths it had.
 
-Every slot decides independently — pinning is combinatorial, not one global policy:
+Each axis and each cell decides a different thing:
 
-| Property | Values |
-| -------- | ------ |
-| size | PINNED (an explicit fraction **of the window**) or FLEXIBLE (absorbs leftover) |
-| display | TILED (consumes layout space) or FLOATING (docked overlay, consumes none) |
+| Property | Owner | Values |
+| -------- | ----- | ------ |
+| width | COLUMN | PINNED (an explicit fraction **of the window**) or FLEXIBLE (absorbs leftover) |
+| height | ROW | a share of the window height; a lone row fills |
+| display | CELL | TILED (consumes layout space) or FLOATING (docked overlay, consumes none) |
+
+Pinning is still combinatorial — three columns, each independently pinned or flexible —
+it is just not per-cell, because two cells of one column cannot be two widths.
 
 **The browser's console and network output is captured IN-APP.** The point of an
 in-tool browser is that the session can see what the page is doing, and Web Inspector
@@ -168,9 +183,11 @@ button beside it.
 
 **Floating is a docked overlay, not a free window.** The panel keeps the edge its slot
 came from (`SlotID.floatsToTrailingEdge`), spans the full height, and takes
-`pinnedFraction` as its width. It consumes no layout space in *any* state, collapsed
-included — so the tiles underneath resolve as if it were not there, and resizing,
-collapsing or maximising the overlay afterwards cannot move them. Dragging its header
+`SlotConfiguration.floatingFraction` as its width — the one width still owned by a cell,
+because a floating panel is not a member of the grid. Its `layout.json` key stays
+`pinnedFraction`, which is what pre-column files wrote. It consumes no layout space in
+*any* state, collapsed included — so the tiles underneath resolve as if it were not
+there, and resizing, collapsing or maximising the overlay afterwards cannot move them. Dragging its header
 into another slot re-anchors it to that edge; dragging its inner edge resizes it.
 Full Width on a floating panel just covers the window and leaves the tiles alone.
 
@@ -181,9 +198,18 @@ header, no rail, and no hint that Safari, Web Output or Documents existed at all
 whole feature was reachable only from the menu bar, which you had to already know about.
 One click on a row opens a closed section, parks a visible one, or brings a parked one
 back; the row's own context menu and the sliders button at the foot of the rail carry
-the layout controls, so they never vanish. It is a SHOW/HIDE switch and never a close
-button — closing discards a panel, so that stays a deliberate act on the header's ✕ or
-in a menu.
+the layout controls, so they never vanish. A rail row is a SHOW/HIDE switch and never a
+close button — closing discards a panel, so that stays a deliberate act on the header's
+✕ or in a menu.
+
+**Moving a section is spatial.** The header's grid button opens a 2 × 3 picture of the
+window (`SlotGridPicker`); hovering a cell says what would be displaced and where it
+lands, so the consequence is on screen before the click. The menu path states the same
+outcome — "Top Right — Safari moves to Top Center". Neither says "swap with": one
+section per cell is a fine rule, but naming the mechanism described the implementation
+and made a move read as a warning. **Pin sits with the size controls** in the header,
+not across a Spacer from them — it fixes the width, so it is a sizing control, and
+across a Spacer it was the one control you had to hunt for.
 
 The rail costs the console **nothing new**: `railStripeWidth` has been a permanently
 reserved gutter since the jump-on-collapse fix, and it is `collapsedRailWidth` (34pt)
@@ -202,26 +228,37 @@ pin-at-current-width — neither survives a 34pt stripe.
 Size arithmetic lives in `WorkspaceLayout.resolve(in:)` and is the whole point of the
 feature — *the console must not resize when a browser closes*:
 
+- A column is **LIVE** when any of its cells shows a section, or when the column is
+  PINNED. A dead column takes no space at all, so the default lone console still fills
+  the window.
 - A pinned fraction is of the WINDOW, so it survives a sibling closing.
-- Leftover after pins splits evenly among flexible slots.
-- An **empty slot that is PINNED reserves its fraction as a GAP** at its own position —
-  a hole held open for a panel that is not there yet. This needs no separate concept: a
-  slot keeps its pin when its section is moved out or closed, so "leave a 30% hole where
-  Safari was" is just the slot, still pinned. Dropping any section there fills it
-  exactly; a flexible neighbour cannot swallow it; right-click releases it. The header's
-  pin button pins a section at its *current* width, which is how a gap gets made.
-  **Closing** a pinned section holds its space; **moving** one releases it — a move is
-  repositioning, not reserving, and a phantom gap would shove everything sideways.
-- Any leftover beyond the pins stays EMPTY at the trailing edge. Nothing stretches
-  into it.
-- A FLOATING slot contributes nothing to this arithmetic — the tiled layout resolves
-  exactly as if that section did not exist.
-- Pins over 100% scale down proportionally; flexible slots keep a `minSlotWidth` floor.
-- A slot that cannot reach its section's minimum width **collapses**, rather than
+- Leftover after pins splits evenly among flexible LIVE COLUMNS.
+- Leftover beyond the pins stays EMPTY, and it falls **where the missing columns are**:
+  `left` starts at the leading edge, `right` ENDS at the trailing edge, `center` is
+  centred between them. Pinning the right column to 50% therefore leaves the empty half
+  on the LEFT. (It used to sweep all leftover to the trailing edge, which is why a
+  right-hand slot anchored left.)
+- An **empty CELL of a live column is a GAP** — real space the grid owns, at the cell's
+  own position, and a drop target that fills it exactly. This is no longer a concept of
+  its own: the cell under an occupied one holds its column open automatically, and
+  "reserved" just means that column is PINNED with nothing in it. **Closing** a section
+  holds its column's space; **moving** one releases the pin *if the move emptied the
+  column outright* — a move is repositioning, not reserving, and a phantom reserved
+  strip would shove everything sideways. A column that still holds something keeps its
+  width, because the remaining cell needs it.
+- A FLOATING cell contributes nothing to this arithmetic — the tiled grid resolves
+  exactly as if that section did not exist, and a floating cell does not make its column
+  live.
+- Pins over 100% scale down proportionally; flexible columns keep a `minSlotWidth` floor.
+- A cell that cannot reach its section's minimum width **collapses**, rather than
   rendering a useless sliver — it goes back to being a row in the rail. The console's
   minimum is a standard **80 columns** (`TerminalMetrics.minimumWidth` — measured from
   the live font, 584pt at Menlo 11pt), because output written to wrap at 80 wraps
-  mid-word below that. The last remaining tiled slot never collapses.
+  mid-word below that. The last section on screen never collapses; instead its column is
+  widened to the section's floor.
+- There is ONE splitter per boundary between adjacent live columns, spanning every live
+  row. A per-row handle would be two controls editing one number, and they could be
+  dragged into disagreeing — the exact class of bug the grid removes.
   A collapsed section stays in the view tree, **parked off-canvas at a usable width** —
   never removed, so its NSView survives, and never reflowed, because the container never
   takes a degenerate size in the first place. Parking at zero width was a trap: it left

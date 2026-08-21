@@ -77,7 +77,13 @@ enum SlotRow: String, Codable, CaseIterable, Identifiable, Sendable {
     var order: Int { self == .top ? 0 : 1 }
 }
 
-/// The X axis within a row.
+/// The X axis — a REAL column, shared down every row.
+///
+/// A column has one x-position and one width for the whole window, so `bottomRight`
+/// is genuinely under `topRight`. That is the entire point of task 990039: the names
+/// promised a grid and the engine packed each row independently, so the right-hand
+/// slot began at the left edge and a lone section in a row swallowed it. Width is a
+/// property of THIS type (`ColumnConfiguration`), never of an individual cell.
 enum SlotColumn: String, Codable, CaseIterable, Identifiable, Sendable {
     case left
     case center
@@ -174,20 +180,55 @@ struct RowConfiguration: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-/// Everything a single slot decides for itself. Size and display are independent,
-/// and every slot carries its own copy — pinning is per-slot and combinatorial, not
-/// one global policy with a single pinned pane.
-struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
-    var id: SlotID
-    /// The section currently in this slot, or nil when the slot is available.
-    var section: SectionKind?
-    /// PINNED: `pinnedFraction` of the WINDOW. FLEXIBLE: absorbs leftover.
+/// How a COLUMN sizes itself. The X-axis twin of `RowConfiguration`, and the only
+/// place a tiled width is decided.
+///
+/// Width lives here rather than on the cell because a column is shared: `topRight` and
+/// `bottomRight` are the same column and must be the same width, or they are not a
+/// grid. It also makes the old "reserved gap" a plain consequence rather than a second
+/// concept — a PINNED column holds its fraction whether or not anything is in it, so
+/// closing the only panel in a column leaves the hole exactly where it was.
+struct ColumnConfiguration: Codable, Equatable, Identifiable, Sendable {
+    var id: SlotColumn
+    /// PINNED: `pinnedFraction` of the WINDOW, held no matter what else is open.
+    /// FLEXIBLE: an even share of whatever the pins leave over.
     var isPinned: Bool = false
     /// Fraction of the window width. Kept even while flexible so un-pinning and
     /// re-pinning returns to the last explicit size.
     var pinnedFraction: Double = 0.4
+
+    init(id: SlotColumn, isPinned: Bool = false, pinnedFraction: Double = 0.4) {
+        self.id = id
+        self.isPinned = isPinned
+        self.pinnedFraction = pinnedFraction
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(SlotColumn.self, forKey: .id)
+        isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        pinnedFraction = try c.decodeIfPresent(Double.self, forKey: .pinnedFraction) ?? 0.4
+    }
+}
+
+/// Everything a single CELL decides for itself: what is in it, and whether that
+/// content is floating or collapsed.
+///
+/// Deliberately NOT where width lives — that is `ColumnConfiguration`. A cell that
+/// owned its own width is exactly what made `bottomRight` a different size and a
+/// different position from `topRight`. The one width still kept here is the FLOATING
+/// one, because a floating panel is an overlay docked to an edge and is not a member
+/// of the grid at all.
+struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
+    var id: SlotID
+    /// The section currently in this slot, or nil when the slot is available.
+    var section: SectionKind?
+    /// Width this section takes WHILE FLOATING, as a fraction of the window. The JSON
+    /// key stays `pinnedFraction`: it is what pre-column files wrote, and renaming a
+    /// persistence key to track a scope change would orphan every saved layout.
+    var floatingFraction: Double = 0.4
     /// FLOATING: overlays the tiled sections and consumes no layout space. The panel
-    /// stays docked to its slot's edge and keeps `pinnedFraction` as its width.
+    /// stays docked to its slot's edge and keeps `floatingFraction` as its width.
     var isFloating: Bool = false
     /// COLLAPSED by choice — the user dragged past the minimum and released, hit the
     /// collapse control, or maximized a sibling. Distinct from the *forced* collapse
@@ -195,18 +236,26 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
     /// evaporates when the window grows, this one persists until the user undoes it.
     var isCollapsed: Bool = false
 
+    /// Pre-column files pinned each SLOT. Read on decode purely to seed the column
+    /// pins (`WorkspaceLayout.adoptLegacySlotPins`) and never written back — it is
+    /// absent from `CodingKeys`, so the synthesized encoder skips it.
+    var legacyPinned: Bool = false
+
     init(id: SlotID,
          section: SectionKind? = nil,
-         isPinned: Bool = false,
-         pinnedFraction: Double = 0.4,
+         floatingFraction: Double = 0.4,
          isFloating: Bool = false,
          isCollapsed: Bool = false) {
         self.id = id
         self.section = section
-        self.isPinned = isPinned
-        self.pinnedFraction = pinnedFraction
+        self.floatingFraction = floatingFraction
         self.isFloating = isFloating
         self.isCollapsed = isCollapsed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, section, isFloating, isCollapsed
+        case floatingFraction = "pinnedFraction"
     }
 
     /// Tolerant decoding: a layout file written by an older build is missing keys a
@@ -216,10 +265,21 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
         // Legacy ids (pre-Y `left`/`center`/`right`) land in the top row.
         id = SlotID(legacy: try c.decode(String.self, forKey: .id)) ?? .topCenter
         section = try c.decodeIfPresent(SectionKind.self, forKey: .section)
-        isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
-        pinnedFraction = try c.decodeIfPresent(Double.self, forKey: .pinnedFraction) ?? 0.4
+        floatingFraction = try c.decodeIfPresent(Double.self, forKey: .floatingFraction) ?? 0.4
         isFloating = try c.decodeIfPresent(Bool.self, forKey: .isFloating) ?? false
         isCollapsed = try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+        legacyPinned = try LegacyPin(from: decoder).isPinned
+    }
+
+    /// The pre-column `isPinned` key, decoded through its own container so it can be
+    /// read without appearing in `CodingKeys` (and therefore without being re-encoded).
+    private struct LegacyPin: Decodable {
+        var isPinned: Bool = false
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: K.self)
+            isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        }
+        enum K: String, CodingKey { case isPinned }
     }
 }
 
@@ -228,14 +288,17 @@ struct SlotConfiguration: Codable, Equatable, Identifiable, Sendable {
 struct WorkspaceLayout: Codable, Equatable, Sendable {
     var slots: [SlotConfiguration]
     var rows: [RowConfiguration]
+    var columns: [ColumnConfiguration]
     /// Last page the browser section had loaded, so reopening it lands back there.
     var browserURL: String?
 
     init(slots: [SlotConfiguration] = WorkspaceLayout.defaultSlots,
          rows: [RowConfiguration] = WorkspaceLayout.defaultRows,
+         columns: [ColumnConfiguration] = WorkspaceLayout.defaultColumns,
          browserURL: String? = nil) {
         self.slots = slots
         self.rows = rows
+        self.columns = columns
         self.browserURL = browserURL
     }
 
@@ -243,8 +306,29 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         slots = try c.decodeIfPresent([SlotConfiguration].self, forKey: .slots) ?? WorkspaceLayout.defaultSlots
         rows = try c.decodeIfPresent([RowConfiguration].self, forKey: .rows) ?? WorkspaceLayout.defaultRows
+        let storedColumns = try c.decodeIfPresent([ColumnConfiguration].self, forKey: .columns)
+        columns = storedColumns ?? WorkspaceLayout.defaultColumns
         browserURL = try c.decodeIfPresent(String.self, forKey: .browserURL)
+        // A pre-column file has no `columns` key at all. Its widths were per-slot, so
+        // lift each pinned slot's fraction onto its column — a saved arrangement keeps
+        // the widths it had instead of springing back to an even split (criterion 8).
+        if storedColumns == nil { adoptLegacySlotPins() }
         normalize()
+    }
+
+    /// Seed the column pins from a pre-column layout file. The TOP row wins where both
+    /// cells of a column were pinned: the top row is where every pre-Y layout lived, so
+    /// it is the one the user actually sized.
+    private mutating func adoptLegacySlotPins() {
+        for column in SlotColumn.allCases {
+            let candidates = SlotID.allCases
+                .filter { $0.column == column }
+                .sorted { $0.row.order < $1.row.order }
+                .map { self[$0] }
+            guard let pinned = candidates.first(where: { $0.legacyPinned }) else { continue }
+            self[column].isPinned = true
+            self[column].pinnedFraction = pinned.floatingFraction
+        }
     }
 
     /// Console in the top-centre slot, flexible and tiled. The bottom row is empty, so
@@ -259,6 +343,12 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         SlotRow.allCases.map { RowConfiguration(id: $0) }
     }
 
+    /// Every column flexible. With only the centre one live, the console fills the
+    /// content area exactly as it did before columns existed.
+    static var defaultColumns: [ColumnConfiguration] {
+        SlotColumn.allCases.map { ColumnConfiguration(id: $0) }
+    }
+
     subscript(row: SlotRow) -> RowConfiguration {
         get { rows.first { $0.id == row } ?? RowConfiguration(id: row) }
         set {
@@ -267,8 +357,26 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         }
     }
 
+    subscript(column: SlotColumn) -> ColumnConfiguration {
+        get { columns.first { $0.id == column } ?? ColumnConfiguration(id: column) }
+        set {
+            if let idx = columns.firstIndex(where: { $0.id == column }) { columns[idx] = newValue }
+            else { columns.append(newValue) }
+        }
+    }
+
     func slots(in row: SlotRow) -> [SlotConfiguration] {
         SlotID.allCases.filter { $0.row == row }.map { self[$0] }
+    }
+
+    func slots(in column: SlotColumn) -> [SlotConfiguration] {
+        SlotID.allCases.filter { $0.column == column }.map { self[$0] }
+    }
+
+    /// Does this column hold any section at all — on screen or merely collapsed?
+    /// A column with nothing left in it is what `move` releases the pin on.
+    func isEmpty(_ column: SlotColumn) -> Bool {
+        slots(in: column).allSatisfy { $0.section == nil }
     }
 
     // MARK: - Access
@@ -309,7 +417,7 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             if let section = config.section, !seenSections.insert(section).inserted {
                 config.section = nil
             }
-            config.pinnedFraction = min(max(config.pinnedFraction, WorkspaceLayout.minPinnedFraction), 1.0)
+            config.floatingFraction = min(max(config.floatingFraction, WorkspaceLayout.minPinnedFraction), 1.0)
             if config.section?.canFloat == false { config.isFloating = false }
             if config.section == nil { config.isFloating = false; config.isCollapsed = false }
             repaired.append(config)
@@ -325,6 +433,12 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
             var config = rows.first { $0.id == row } ?? RowConfiguration(id: row)
             config.id = row
             config.heightFraction = min(max(config.heightFraction, WorkspaceLayout.minPinnedFraction), 1.0)
+            return config
+        }
+        columns = SlotColumn.allCases.map { column in
+            var config = columns.first { $0.id == column } ?? ColumnConfiguration(id: column)
+            config.id = column
+            config.pinnedFraction = min(max(config.pinnedFraction, WorkspaceLayout.minPinnedFraction), 1.0)
             return config
         }
     }
@@ -343,25 +457,27 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // re-docked into the tiled flow.
         guard !self[id].isFloating else { return }
 
+        let column = id.column
         let want: Double
-        if self[id].isPinned {
-            want = Swift.max(self[id].pinnedFraction, minFraction)
-            self[id].pinnedFraction = want
+        if self[column].isPinned {
+            want = Swift.max(self[column].pinnedFraction, minFraction)
+            self[column].pinnedFraction = want
         } else {
             want = minFraction
         }
 
-        // Reserved gaps claim width exactly like pinned sections, so they belong in this
-        // sum too — otherwise a hole could crowd the restored slot straight back into a
-        // collapse. Collapsed neighbours claim nothing and are excluded.
-        let others = slots.filter { $0.id != id && !$0.isFloating && $0.isPinned && !$0.isCollapsed }
-        let sum = others.reduce(0.0) { $0 + $1.pinnedFraction }
+        // Every other pinned column claims window width — including one that is merely
+        // RESERVED (pinned with nothing in it), which is the successor of the old
+        // pinned-empty slot. Scale them down until the restored column fits: this is
+        // the only escape from a rail and it has to always succeed.
+        let others = SlotColumn.allCases.filter { $0 != column && self[$0].isPinned }
+        let sum = others.reduce(0.0) { $0 + self[$1].pinnedFraction }
         let budget = Swift.max(0, 1.0 - want)
         if sum > budget, sum > 0 {
             let scale = budget / sum
             for other in others {
-                self[other.id].pinnedFraction =
-                    Swift.max(other.pinnedFraction * scale, WorkspaceLayout.minPinnedFraction)
+                self[other].pinnedFraction =
+                    Swift.max(self[other].pinnedFraction * scale, WorkspaceLayout.minPinnedFraction)
             }
         }
     }
@@ -390,27 +506,33 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
 
     // MARK: - Size arithmetic
 
-    /// Resolve slots to frames in a workspace of `size`.
+    /// Resolve the grid to frames in a workspace of `size`.
     ///
-    /// The rules, in order:
-    /// 1. A pinned slot takes its exact fraction OF THE WINDOW — not of its siblings —
-    ///    so it holds that fraction no matter how many neighbours it has, and keeps it
-    ///    when one closes.
-    /// 2. Leftover after all pins is split evenly among FLEXIBLE tiled slots.
-    /// 3. With no flexible slot the leftover STAYS EMPTY; nothing stretches into it.
-    ///    The empty space is placed at the positions of the slots that gave it up (a
-    ///    floating slot leaves its former width behind as a gap), so pinned tiled
-    ///    slots do not move when a neighbour is floated. Any remainder trails at the
-    ///    right edge.
-    /// 4. Pins summing over the available width scale down proportionally.
-    /// 5. Flexible slots are guaranteed `minSlotWidth`; pins scale down to make room.
-    /// 6. A slot that cannot reach its section's minimum width COLLAPSES to a rail
-    ///    rather than rendering a uselessly narrow section. For the console that
-    ///    minimum is a standard 80-column terminal (`TerminalMetrics.minimumWidth`) —
-    ///    below it, output written to wrap at 80 wraps mid-word instead. The last
-    ///    remaining tiled slot never collapses; something has to be on screen.
+    /// THE GRID IS REAL (task 990039). A column has ONE x and ONE width for the whole
+    /// window, so `bottomRight` sits under `topRight` and a section dropped there does
+    /// not slide to the left edge or swallow its row. The rules, in order:
+    /// 1. A column is LIVE when any of its cells shows a section, or when the column is
+    ///    PINNED — a pinned column holds its width with nothing in it, which is how a
+    ///    position is reserved. A dead column takes no space at all, so the default
+    ///    single-console layout still fills the window.
+    /// 2. A pinned column takes its exact fraction OF THE WINDOW — not of its
+    ///    neighbours — so it keeps that fraction when one of them closes.
+    /// 3. Leftover after all pins is split evenly among FLEXIBLE live columns.
+    /// 4. With no flexible column the leftover STAYS EMPTY, and it falls where the
+    ///    MISSING columns are: `left` starts at the leading edge, `right` ends at the
+    ///    trailing edge, `center` is centred between them. Pinning the right column to
+    ///    50% therefore leaves the empty half on the LEFT.
+    /// 5. Pins summing over the available width scale down proportionally; flexible
+    ///    columns keep a `minSlotWidth` floor.
+    /// 6. A cell that cannot reach its section's minimum width COLLAPSES to the rail
+    ///    rather than rendering a useless sliver. For the console that minimum is a
+    ///    standard 80-column terminal (`TerminalMetrics.minimumWidth`) — below it,
+    ///    output written to wrap at 80 wraps mid-word instead. The last section on
+    ///    screen never collapses; something has to be visible.
+    /// 7. An EMPTY cell of a live column is a GAP: real space the grid owns, so no
+    ///    neighbour can silently absorb what a named slot holds, and a drop lands there
+    ///    exactly.
     ///
-    /// `minWidths` is supplied by the view layer, which knows the terminal font.
     /// `minWidths` / `minHeights` are supplied by the view layer, which knows the
     /// terminal font.
     func resolve(in size: CGSize,
@@ -437,6 +559,10 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // dead end. (The FORCED-collapse loop below keeps its own guard: a window merely
         // getting narrow must never hide your last panel.)
         var collapsed = Set(slots.filter { $0.section != nil && !$0.isFloating && $0.isCollapsed }.map(\.id))
+        func isVisible(_ id: SlotID) -> Bool {
+            let slot = self[id]
+            return slot.section != nil && !slot.isFloating && !collapsed.contains(id)
+        }
 
         // The rail stripe is ALWAYS reserved, whether or not anything is collapsed.
         // Sizing it to the collapsed set made the whole layout jump — every panel
@@ -445,107 +571,105 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // stable through every collapse; it is also where further controls will go.
         let stripeWidth = WorkspaceLayout.collapsedRailWidth
         let contentWidth = max(0, size.width - stripeWidth)
-
-        // Forced-collapse pass, per ROW: a slot is starved by its own row's width, not
-        // by the whole window. Bounded by the slot count.
-        var widths: [SlotID: CGFloat] = [:]
-        var heights: [SlotRow: CGFloat] = [:]
-        while true {
-            let liveRows = SlotRow.allCases.filter { row in
-                slots(in: row).contains { slot in
-                    (slot.section != nil && !slot.isFloating && !collapsed.contains(slot.id))
-                        || (slot.section == nil && slot.isPinned)
-                }
-            }
-            heights = rowHeights(live: liveRows, minHeights: minHeights, size: size)
-
-            widths = [:]
-            for row in liveRows {
-                let inRow = slots(in: row)
-                let active = inRow.filter { $0.section != nil && !$0.isFloating && !collapsed.contains($0.id) }
-                let gaps = inRow.filter { $0.section == nil && $0.isPinned }
-                widths.merge(tileWidths(active: active, gaps: gaps,
-                                        contentWidth: contentWidth,
-                                        windowWidth: size.width)) { a, _ in a }
-            }
-
-            var starvedID: SlotID?
-            for row in liveRows {
-                let active = slots(in: row).filter {
-                    $0.section != nil && !$0.isFloating && !collapsed.contains($0.id)
-                }
-                guard active.count > 1 else { continue }
-                if let starved = active.first(where: { (widths[$0.id] ?? 0) + 0.5 < floorWidth($0) }) {
-                    starvedID = starved.id
-                    break
-                }
-            }
-            guard let starvedID else { break }
-            collapsed.insert(starvedID)
-        }
         result.railStripeWidth = stripeWidth
 
-        // A slot that could not be collapsed — the last one standing in its row — must
-        // still not be laid out below its floor. A lone console pinned at a tiny
-        // fraction (a leftover from a splitter drag) was laid out at ~24pt, TWO COLUMNS,
-        // and a resumed history flooding in at that width corrupts the SwiftTerm buffer
-        // for good. Slots merely pinned small ALONGSIDE others are untouched, so a lone
-        // 50% pin still leaves 50% empty.
-        for row in SlotRow.allCases {
-            let survivors = slots(in: row).filter {
-                $0.section != nil && !$0.isFloating && !collapsed.contains($0.id)
+        // Forced-collapse pass. A cell is starved by ITS COLUMN's width — the width
+        // every other cell in that column also gets — so this is ONE pass over the grid
+        // rather than one per row. Bounded by the slot count.
+        var widths: [SlotColumn: CGFloat] = [:]
+        var heights: [SlotRow: CGFloat] = [:]
+        var liveColumns: [SlotColumn] = []
+        var liveRows: [SlotRow] = []
+        while true {
+            let visible = Set(SlotID.allCases.filter(isVisible))
+            liveColumns = SlotColumn.allCases.filter { column in
+                self[column].isPinned || visible.contains { $0.column == column }
             }
-            guard survivors.count == 1, let only = survivors.first else { continue }
-            let reserved = slots(in: row)
-                .filter { $0.section == nil && $0.isPinned }
-                .reduce(0) { $0 + (widths[$1.id] ?? 0) }
-            widths[only.id] = min(max(widths[only.id] ?? 0, floorWidth(only)),
-                                  max(0, contentWidth - reserved))
+            liveRows = SlotRow.allCases.filter { row in visible.contains { $0.row == row } }
+            widths = columnWidths(live: liveColumns, contentWidth: contentWidth, windowWidth: size.width)
+            heights = rowHeights(live: liveRows, visible: visible, minHeights: minHeights, size: size)
+
+            guard visible.count > 1 else { break }
+            guard let starved = SlotID.allCases.first(where: {
+                visible.contains($0) && (widths[$0.column] ?? 0) + 0.5 < floorWidth(self[$0])
+            }) else { break }
+            collapsed.insert(starved)
+        }
+
+        // The last section standing cannot be collapsed, so its COLUMN is widened to the
+        // section's floor instead. A lone console pinned at a tiny fraction (a leftover
+        // from a splitter drag) was otherwise laid out at ~24pt — TWO COLUMNS — and a
+        // resumed history flooding in at that width corrupts the SwiftTerm buffer for
+        // good. Columns merely pinned small ALONGSIDE others are untouched, so a lone
+        // 50% pin still leaves 50% empty.
+        let visible = SlotID.allCases.filter(isVisible)
+        if visible.count == 1, let only = visible.first {
+            let reserved = liveColumns
+                .filter { $0 != only.column }
+                .reduce(0) { $0 + (widths[$1] ?? 0) }
+            widths[only.column] = min(max(widths[only.column] ?? 0, floorWidth(self[only])),
+                                      max(0, contentWidth - reserved))
+        }
+
+        // Column origins — rule 4. `left` is anchored to the leading edge and `right` to
+        // the trailing one, so leftover width falls where the MISSING columns are rather
+        // than always trailing off the right. This is what makes "Right" mean the right.
+        let leftWidth = widths[.left] ?? 0
+        let centerWidth = widths[.center] ?? 0
+        let rightWidth = widths[.right] ?? 0
+        var origins: [SlotColumn: CGFloat] = [:]
+        origins[.left] = 0
+        origins[.right] = max(leftWidth, contentWidth - rightWidth)
+        let between = max(0, (origins[.right] ?? contentWidth) - leftWidth)
+        origins[.center] = leftWidth + max(0, (between - centerWidth) / 2)
+        for column in liveColumns {
+            guard let width = widths[column], let x = origins[column] else { continue }
+            result.columnFrames[column] = CGRect(x: x, y: 0, width: width, height: size.height)
         }
 
         // Floating slots overlay the whole content area at full height — they are not
-        // members of a row — docked to their slot's edge, consuming no layout space. A
-        // full-width overlay stops at the rail stripe rather than running under it.
+        // members of the grid — docked to their slot's edge, consuming no layout space.
+        // A full-width overlay stops at the rail stripe rather than running under it.
         for slot in occupied where slot.isFloating && !slot.isCollapsed {
-            let width = min(max(CGFloat(slot.pinnedFraction) * size.width, floorWidth(slot)), contentWidth)
+            let width = min(max(CGFloat(slot.floatingFraction) * size.width, floorWidth(slot)), contentWidth)
             let x = slot.id.floatsToTrailingEdge ? contentWidth - width : 0
             result.floating[slot.id] = CGRect(x: x, y: 0, width: width, height: size.height)
         }
 
-        // Lay each row out in turn, running the X arithmetic inside it.
+        // Walk the grid: a section where there is one, a GAP where the column is live
+        // and the cell is not. The gap is the whole of rule 7 — the space a named slot
+        // owns, held open, and a drop target that fills it exactly.
         var y: CGFloat = 0
         var previousRow: SlotRow?
         for row in SlotRow.allCases {
-            guard let rowHeight = heights[row], rowHeight > 0 else { continue }
+            guard liveRows.contains(row), let rowHeight = heights[row], rowHeight > 0 else { continue }
             if let previousRow {
                 result.rowSplitters.append(RowSplitterPosition(above: previousRow, below: row, y: y))
             }
-            var x: CGFloat = 0
-            var previousTiled: SlotID?
-            for id in SlotID.allCases where id.row == row {
-                // Collapsed sections are tabs in the stripe, not positions in the flow.
-                guard !collapsed.contains(id), let width = widths[id] else { continue }
-                if self[id].section == nil {
-                    // A reserved gap: real layout space, owned by a slot, holding a
-                    // position open. Not a section, so no splitter runs across it.
-                    result.gaps[id] = CGRect(x: x, y: y, width: width, height: rowHeight)
-                    x += width
-                    previousTiled = nil
-                    continue
-                }
-                result.tiled[id] = CGRect(x: x, y: y, width: width, height: rowHeight)
-                if let previousTiled {
-                    result.splitters.append(SplitterPosition(leading: previousTiled, trailing: id,
-                                                             x: x, y: y, height: rowHeight))
-                }
-                x += width
-                previousTiled = id
+            for column in liveColumns {
+                guard let width = widths[column], width > 0, let x = origins[column] else { continue }
+                let id = SlotID.at(row, column)
+                let rect = CGRect(x: x, y: y, width: width, height: rowHeight)
+                if isVisible(id) { result.tiled[id] = rect } else { result.gaps[id] = rect }
             }
-            result.emptyTrailingWidth = max(result.emptyTrailingWidth, contentWidth - x)
             y += rowHeight
             previousRow = row
         }
         result.rowHeights = heights
+
+        // ONE splitter per boundary between adjacent live columns, spanning every live
+        // row — the boundary is at the same x in each of them, so a per-row handle would
+        // be several controls for one number. Columns that are not touching (leftover
+        // sitting between them) have no shared boundary and nothing to trade.
+        let totalHeight = liveRows.reduce(0) { $0 + (heights[$1] ?? 0) }
+        for (index, column) in liveColumns.enumerated() where index > 0 {
+            let leading = liveColumns[index - 1]
+            guard let x = origins[column], let leadingX = origins[leading],
+                  let leadingWidth = widths[leading], totalHeight > 0 else { continue }
+            guard abs((leadingX + leadingWidth) - x) < 0.5 else { continue }
+            result.splitters.append(ColumnSplitterPosition(leading: leading, trailing: column,
+                                                           x: x, y: 0, height: totalHeight))
+        }
 
         // Collapsed sections are PARKED OFF-CANVAS at a usable size rather than squashed
         // to zero. A zero-width container is a degenerate geometry sitting one unguarded
@@ -574,17 +698,20 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
     /// A LONE ROW FILLS. Height is only constrained once a second row sits under the
     /// first — that is the whole rule, and it is why rows have no pinned/flexible
     /// switch: pinning is a width concept. With two rows live they split the height by
-    /// their `heightFraction`, floored at the tallest minimum their sections declare
-    /// (the console's is 24 terminal rows). If the floors cannot both fit, both scale
-    /// down proportionally rather than one vanishing — a row is load-bearing.
+    /// their `heightFraction`, floored at the tallest minimum their VISIBLE sections
+    /// declare (the console's is 24 terminal rows). If the floors cannot both fit, both
+    /// scale down proportionally rather than one vanishing — a row is load-bearing.
     private func rowHeights(live: [SlotRow],
+                            visible: Set<SlotID>,
                             minHeights: [SectionKind: CGFloat],
                             size: CGSize) -> [SlotRow: CGFloat] {
         guard !live.isEmpty else { return [:] }
         guard live.count > 1 else { return [live[0]: size.height] }
 
         func floor(_ row: SlotRow) -> Double {
-            let points = slots(in: row).compactMap(\.section)
+            let points = SlotID.allCases
+                .filter { $0.row == row && visible.contains($0) }
+                .compactMap { self[$0].section }
                 .map { minHeights[$0] ?? WorkspaceLayout.minRowHeight }.max()
                 ?? WorkspaceLayout.minRowHeight
             return Double(points) / Double(size.height)
@@ -623,28 +750,25 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         return fractions.mapValues { CGFloat($0) * size.height }
     }
 
-    /// One sizing pass over the slots still tiled IN ONE ROW. Widths are computed purely
-    /// as fractions of the window so they always sum to ≤ 1 — a slot is never widened
-    /// past its share to meet a floor, because that would silently overflow the row.
-    /// Falling short of the floor is what the collapse pass acts on instead.
-    private func tileWidths(active: [SlotConfiguration],
-                            gaps: [SlotConfiguration],
-                            contentWidth: CGFloat,
-                            windowWidth: CGFloat) -> [SlotID: CGFloat] {
-        guard !active.isEmpty || !gaps.isEmpty, contentWidth > 0, windowWidth > 0 else { return [:] }
+    /// One sizing pass over the LIVE COLUMNS. Widths are computed purely as fractions of
+    /// the window so they always sum to ≤ 1 — a column is never widened past its share
+    /// to meet a floor, because that would silently overflow the grid. Falling short of
+    /// the floor is what the collapse pass acts on instead.
+    private func columnWidths(live: [SlotColumn],
+                              contentWidth: CGFloat,
+                              windowWidth: CGFloat) -> [SlotColumn: CGFloat] {
+        guard !live.isEmpty, contentWidth > 0, windowWidth > 0 else { return [:] }
         // Fractions stay OF THE WINDOW, so a pinned 50% is still exactly 50% of the
         // window. The rail stripe only shrinks the BUDGET they have to fit inside — it
         // must never become the thing fractions are measured against, or every pin would
         // silently shrink the moment a panel collapsed.
         let budget = Double(contentWidth) / Double(windowWidth)
 
-        let flexible = active.filter { !$0.isPinned }
-        // Reserved gaps claim window space exactly like a pinned section does — that is
-        // what stops a flexible neighbour swallowing the hole.
-        var pinnedSum = (active.filter(\.isPinned) + gaps).reduce(0.0) { $0 + $1.pinnedFraction }
+        let flexible = live.filter { !self[$0].isPinned }
+        var pinnedSum = live.filter { self[$0].isPinned }.reduce(0.0) { $0 + self[$1].pinnedFraction }
 
-        // Reserve a share for the flexible slots, then fit the pins into what is left.
-        // With no flexible slot `reserved` is 0 and this degenerates to the plain
+        // Reserve a share for the flexible columns, then fit the pins into what is left.
+        // With no flexible column `reserved` is 0 and this degenerates to the plain
         // over-100% proportional scale-down.
         let reserved = min(Double(flexible.count) * Double(WorkspaceLayout.minSlotWidth) / Double(windowWidth),
                            budget * 0.9)
@@ -658,21 +782,25 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         let leftover = max(0, budget - pinnedSum)
         let flexEach = flexible.isEmpty ? 0 : leftover / Double(flexible.count)
 
-        var widths: [SlotID: CGFloat] = [:]
-        for slot in active + gaps {
-            let fraction = slot.isPinned ? slot.pinnedFraction * pinScale : flexEach
-            widths[slot.id] = CGFloat(fraction) * windowWidth
+        var widths: [SlotColumn: CGFloat] = [:]
+        for column in live {
+            let config = self[column]
+            let fraction = config.isPinned ? config.pinnedFraction * pinScale : flexEach
+            widths[column] = CGFloat(fraction) * windowWidth
         }
         return widths
     }
 }
 
-/// A draggable vertical boundary between two adjacent tiled slots in one row.
-struct SplitterPosition: Equatable, Identifiable {
-    var leading: SlotID
-    var trailing: SlotID
+/// A draggable vertical boundary between two adjacent live COLUMNS.
+///
+/// One handle for the whole boundary, spanning every live row: a column has a single
+/// width, so a per-row splitter would be two controls editing one number — and the two
+/// could be dragged to disagree, which is the class of bug the grid exists to remove.
+struct ColumnSplitterPosition: Equatable, Identifiable {
+    var leading: SlotColumn
+    var trailing: SlotColumn
     var x: CGFloat
-    /// The splitter only spans its own row.
     var y: CGFloat
     var height: CGFloat
     var id: String { "\(leading.rawValue)-\(trailing.rawValue)" }
@@ -698,16 +826,18 @@ struct ResolvedWorkspaceLayout: Equatable {
     /// section can never change it, and therefore can never move the console. Everything
     /// else is laid out to the left of it.
     var railStripeWidth: CGFloat = 0
-    /// Reserved empty space owned by a pinned, sectionless slot — a hole held open for
-    /// a panel that is not there yet, and a drop target that fills it exactly.
+    /// EMPTY CELLS of live columns: the space a named slot owns with nothing in it, so
+    /// no neighbour can absorb it, and a drop target that fills it exactly. A cell whose
+    /// whole column is pinned and empty is a RESERVED position — the successor of the
+    /// old pinned-empty slot.
     var gaps: [SlotID: CGRect] = [:]
-    var splitters: [SplitterPosition] = []
+    /// x and width of each live column, full window height. The grid's spine: every
+    /// cell in a column takes its x and width from here.
+    var columnFrames: [SlotColumn: CGRect] = [:]
+    var splitters: [ColumnSplitterPosition] = []
     var rowSplitters: [RowSplitterPosition] = []
     /// Resolved height of each live row; absent rows have none and take no space.
     var rowHeights: [SlotRow: CGFloat] = [:]
-    /// Widest leftover that no flexible slot absorbed in any row, rendered as empty
-    /// space at the trailing edge.
-    var emptyTrailingWidth: CGFloat = 0
 
     func frame(for id: SlotID) -> CGRect? {
         tiled[id] ?? floating[id]

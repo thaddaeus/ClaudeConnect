@@ -44,8 +44,9 @@ struct WorkspaceView: View {
                                                  minHeights: Self.minHeights)
 
             ZStack(alignment: .topLeading) {
-                // Leftover that no flexible slot absorbed shows through here as
-                // deliberate empty space (acceptance criterion 4).
+                // Leftover that no flexible column absorbed shows through here as
+                // deliberate empty space — at the position of the MISSING column, not
+                // swept to the trailing edge.
                 Color(nsColor: .underPageBackgroundColor)
                     .frame(width: size.width, height: size.height)
 
@@ -67,7 +68,7 @@ struct WorkspaceView: View {
                     documentSection(resolved, size)
                 }
 
-                reservedGaps(resolved, size)
+                cellGaps(resolved, size)
 
                 sectionRail(resolved, size)
 
@@ -248,23 +249,29 @@ struct WorkspaceView: View {
         .frame(width: max(0, size.width - resolved.railStripeWidth), height: size.height)
     }
 
-    // MARK: - Reserved gaps
+    // MARK: - Empty cells
 
-    /// A pinned, empty slot: a hole the user deliberately left open. It is real layout
-    /// space owned by a slot, so it reads as a reserved position rather than a rendering
-    /// bug, and dropping a section on it fills it at exactly that width. Once there is a
-    /// document reader and a console-output panel, this is where they land.
+    /// An EMPTY CELL of a live column: space the grid owns with nothing in it.
+    ///
+    /// This is the visible half of criterion 3 — the column below an occupied one holds
+    /// its position instead of a neighbour silently absorbing it — and it subsumes what
+    /// used to be a separate "reserved gap". A cell whose whole column is pinned and
+    /// empty is a position deliberately held open; a cell that is merely the other row
+    /// of a live column is space the grid owns anyway. Dropping a section on either
+    /// fills it exactly.
     @ViewBuilder
-    private func reservedGaps(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
+    private func cellGaps(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
         ForEach(SlotID.allCases) { id in
             if let rect = resolved.gaps[id] {
-                let percent = Int((layout[id].pinnedFraction * 100).rounded())
+                let column = layout.column(id.column)
+                let held = column.isPinned && layout.layout.isEmpty(id.column)
+                let percent = Int((column.pinnedFraction * 100).rounded())
                 VStack(spacing: 3) {
                     Image(systemName: "rectangle.dashed")
                         .font(.system(size: 14))
-                    Text("\(id.title) · \(percent)%")
+                    Text(id.title)
                         .font(.system(size: 10, weight: .medium))
-                    Text("reserved")
+                    Text(held ? "held at \(percent)%" : "empty")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -273,13 +280,17 @@ struct WorkspaceView: View {
                 .background(Color(nsColor: .underPageBackgroundColor))
                 .overlay {
                     RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color(nsColor: .separatorColor),
-                                      style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                        .strokeBorder(hoveredDropSlot == id ? Color.accentColor
+                                                            : Color(nsColor: .separatorColor),
+                                      style: StrokeStyle(lineWidth: hoveredDropSlot == id ? 2 : 1,
+                                                         dash: [5, 4]))
                         .padding(4)
                 }
                 .contentShape(Rectangle())
-                .help("\(id.title) is held open at \(percent)% for a panel to drop into. Right-click to release it.")
-                .contextMenu { SlotGapMenu(id: id, layout: layout) }
+                .help(held
+                      ? "\(id.title) — the \(id.column.title) column is held at \(percent)% for a panel to drop into."
+                      : "\(id.title) is empty. The \(id.column.title) column owns this space; drop a panel here to fill it.")
+                .contextMenu { SlotCellMenu(id: id, layout: layout) }
                 .onDrop(of: [.text],
                         isTargeted: Binding(get: { hoveredDropSlot == id },
                                             set: { hoveredDropSlot = $0 ? id : nil })) { _ in
@@ -337,33 +348,28 @@ struct WorkspaceView: View {
 
     /// The splitter thickens and changes colour as the drag reaches a section's floor,
     /// so the resistance is visible at the pointer as well as in the readout.
-    private func splitterIsActive(_ splitter: SplitterPosition) -> Bool {
-        guard let id = dragFeedback.slot else { return false }
-        return id == splitter.leading || id == splitter.trailing
+    private func splitterIsActive(_ splitter: ColumnSplitterPosition) -> Bool {
+        let columns = Set(dragFeedback.slots.map(\.column))
+        return columns.contains(splitter.leading) || columns.contains(splitter.trailing)
     }
 
-    private func splitterColor(_ splitter: SplitterPosition) -> Color {
+    private func splitterColor(_ splitter: ColumnSplitterPosition) -> Color {
         guard splitterIsActive(splitter) else { return Color(nsColor: .separatorColor) }
         return splitterActiveColor
     }
 
     private var splitterActiveColor: Color {
-        if case .willCollapse = dragFeedback { return .orange }
-        return .accentColor
+        dragFeedback.isCollapsing ? .orange : .accentColor
     }
 
-    private func splitterGesture(_ splitter: SplitterPosition,
+    private func splitterGesture(_ splitter: ColumnSplitterPosition,
                                  _ resolved: ResolvedWorkspaceLayout,
                                  _ size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
                 guard size.width > 0 else { return }
-                let leadingMin = Self.minWidths[layout[splitter.leading].section ?? .console]
-                    ?? WorkspaceLayout.minSlotWidth
-                let trailingMin = Self.minWidths[layout[splitter.trailing].section ?? .console]
-                    ?? WorkspaceLayout.minSlotWidth
                 // Keyed by the gesture's start location as well as the splitter, because
-                // dragging a section past its minimum collapses it — which removes this
+                // dragging a column past its minimum collapses it — which removes this
                 // splitter mid-gesture, so `onEnded` never fires and stale state would
                 // otherwise be reused as the base for the next drag.
                 let drag: SplitterDrag
@@ -372,17 +378,17 @@ struct WorkspaceView: View {
                    existing.startX == value.startLocation.x {
                     drag = existing
                 } else {
-                    let leadingWidth = resolved.tiled[splitter.leading]?.width ?? 0
-                    let trailingWidth = resolved.tiled[splitter.trailing]?.width ?? 0
+                    let leadingWidth = resolved.columnFrames[splitter.leading]?.width ?? 0
+                    let trailingWidth = resolved.columnFrames[splitter.trailing]?.width ?? 0
                     drag = SplitterDrag(
                         id: splitter.id,
                         startX: value.startLocation.x,
                         leading: splitter.leading,
                         trailing: splitter.trailing,
                         leadingFraction: Double(leadingWidth / size.width),
-                        // A flexible trailing slot absorbs the change on its own and
+                        // A flexible trailing column absorbs the change on its own and
                         // must NOT be pinned by the drag.
-                        trailingFraction: layout[splitter.trailing].isPinned
+                        trailingFraction: layout.column(splitter.trailing).isPinned
                             ? Double(trailingWidth / size.width) : nil
                     )
                     splitterDrag = drag
@@ -393,17 +399,14 @@ struct WorkspaceView: View {
                     trailing: drag.trailing,
                     leadingFraction: drag.leadingFraction + delta,
                     trailingFraction: drag.trailingFraction.map { $0 - delta },
-                    windowWidth: size.width,
-                    leadingMin: leadingMin,
-                    trailingMin: trailingMin
+                    windowWidth: size.width
                 )
             }
             .onEnded { _ in
-                // Collapse commits on RELEASE, never mid-drag: the section holds at its
-                // minimum while the pointer runs past it, and only letting go hides it.
-                if case .willCollapse(let id) = dragFeedback {
-                    layout.collapse(id)
-                }
+                // Collapse commits on RELEASE, never mid-drag: the sections hold at
+                // their minimum while the pointer runs past it, and only letting go
+                // hides them.
+                if case .willCollapse(let ids) = dragFeedback { layout.collapse(ids) }
                 dragFeedback = .free
                 splitterDrag = nil
             }
@@ -415,12 +418,21 @@ struct WorkspaceView: View {
     /// something you SEE rather than something that just happens.
     @ViewBuilder
     private func dragReadouts(_ resolved: ResolvedWorkspaceLayout, _ size: CGSize) -> some View {
-        let subjects: [SlotID] = splitterDrag.map { [$0.leading, $0.trailing] }
+        // One readout per SECTION the drag is acting on. A column boundary can be
+        // moving two of them at once — the cells above and below it — and both need to
+        // show what width they are landing at.
+        let subjects: [SlotID] = splitterDrag
+            .map { drag in
+                SlotID.allCases.filter {
+                    ($0.column == drag.leading || $0.column == drag.trailing)
+                        && resolved.tiled[$0] != nil
+                }
+            }
             ?? floatEdgeDrag.map { [$0.slot] } ?? []
         if !subjects.isEmpty {
             ForEach(subjects, id: \.self) { id in
                 if let rect = resolved.frame(for: id), let kind = layout[id].section {
-                    readout(for: kind, rect: rect, isSubject: dragFeedback.slot == id)
+                    readout(for: kind, rect: rect, isSubject: dragFeedback.slots.contains(id))
                         .offset(x: rect.midX - 70, y: rect.midY - 18)
                         .frame(width: 140, height: 36)
                         .zIndex(20)
@@ -430,7 +442,7 @@ struct WorkspaceView: View {
     }
 
     private func readout(for kind: SectionKind, rect: CGRect, isSubject: Bool) -> some View {
-        let collapsing = isSubject && { if case .willCollapse = dragFeedback { return true } else { return false } }()
+        let collapsing = isSubject && dragFeedback.isCollapsing
         let atMin = isSubject && !collapsing
         let text: String
         if collapsing {
@@ -548,9 +560,7 @@ struct WorkspaceView: View {
                                                              windowWidth: size.width)
                     }
                     .onEnded { _ in
-                        if case .willCollapse(let collapsing) = dragFeedback {
-                            layout.collapse(collapsing)
-                        }
+                        if case .willCollapse(let ids) = dragFeedback { layout.collapse(ids) }
                         dragFeedback = .free
                         floatEdgeDrag = nil
                     }
@@ -595,8 +605,11 @@ struct WorkspaceView: View {
                 VStack(spacing: 4) {
                     Text(id.title)
                         .font(.system(size: 13, weight: .semibold))
-                    if let occupant, occupant != draggingSection {
-                        Text("swap with \(occupant.title)")
+                    // Say what HAPPENS to the panel already there, not what the engine
+                    // does to get it there. "Safari moves to Top Center" is the outcome
+                    // the user is agreeing to; "swap with Safari" was the mechanism.
+                    if let displaced = draggingSection.flatMap({ layout.displacement(moving: $0, to: id) }) {
+                        Text("\(displaced.section.title) moves to \(displaced.destination.title)")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     } else if occupant == nil {
@@ -643,8 +656,8 @@ struct WorkspaceView: View {
     private struct SplitterDrag {
         var id: String
         var startX: CGFloat
-        var leading: SlotID
-        var trailing: SlotID
+        var leading: SlotColumn
+        var trailing: SlotColumn
         var leadingFraction: Double
         var trailingFraction: Double?
     }
