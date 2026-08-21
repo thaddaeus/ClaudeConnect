@@ -35,6 +35,10 @@ Close options:
   --close                  Close a tab (requires --name)
   --name NAME              Name of the tab to close (with --close)
 
+Document options:
+  --open-document PATH     Open a file in the app's Documents panel, as a tab parented to
+                           this one. Prints a JSON reply; exits non-zero if it failed.
+
 Browser options — the app's own Safari panel (what the human is looking at).
 These print a JSON reply and exit non-zero if the action failed:
   --browser-navigate URL   Point the in-app browser at a page. Returns once it loads.
@@ -332,6 +336,25 @@ def main():
                 print("Error: --browser-scroll takes a number of pixels (negative scrolls "
                       "up), or 'top'/'bottom'", file=sys.stderr)
                 sys.exit(1)
+        emit_reply(send_request(cmd))
+
+    # Put a FILE in front of the human, in the app's Documents panel.
+    #
+    # The panel was reachable only by hand — the menu, its empty-state button, or a drag —
+    # so a session that produced a report or a diff had nothing to do with it. Answers,
+    # like the browser verbs, because "did it open" is worth knowing.
+    if "--open-document" in args:
+        i = args.index("--open-document")
+        if i + 1 >= len(args) or args[i + 1].startswith("--"):
+            print("Error: --open-document needs a file path", file=sys.stderr)
+            sys.exit(1)
+        cmd = {"action": "open-document",
+               "path": os.path.abspath(os.path.expanduser(args[i + 1]))}
+        tab_id = os.environ.get("CONSOLEFORGE_TAB_ID")
+        # Parents the document to the calling tab, and is how the app decides whether the
+        # document strip's selection should move (only if you are on that tab already).
+        if tab_id:
+            cmd["tabID"] = tab_id
         emit_reply(send_request(cmd))
 
     # Hand the human a real browser WINDOW — a managed Chrome owned by this tab, which

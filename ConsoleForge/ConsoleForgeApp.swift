@@ -410,6 +410,8 @@ struct ConsoleForgeApp: App {
             // same as the rest of the slot layout, so any session in this window drives
             // the one browser it can see.
             BrowserControl.shared.handle(command)
+        case "open-document":
+            handleOpenDocument(command)
         case "open-tab", "":
             handleOpenTab(command)
         default:
@@ -466,6 +468,54 @@ struct ConsoleForgeApp: App {
         if shouldFocus {
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    /// A session putting a FILE in front of you.
+    ///
+    /// The Documents panel was reachable only by hand — the menu, its empty-state button,
+    /// or a drag — so a session that produced a report, a diff or a log had no way to show
+    /// it. Same gap the browser had before v0.9.2: the panel existed, the agent could not
+    /// use it.
+    ///
+    /// Focus follows the rule from task 990034: the document strip's selection moves only
+    /// if you are already on the tab that asked. A background spoke opening a file must
+    /// not yank the document you are reading. The CONSOLE strip is never touched either
+    /// way — `openDocumentTab` goes to the document strip, and moving `activeTabID` would
+    /// unmount the terminal view.
+    private func handleOpenDocument(_ command: TabCommand) {
+        guard let raw = command.path, !raw.isEmpty else { return }
+        let path = (raw as NSString).expandingTildeInPath
+        let requestID = command.requestID
+
+        guard FileManager.default.fileExists(atPath: path) else {
+            respond(requestID, ["ok": false, "error": "no such file: \(path)"])
+            return
+        }
+
+        let parentID = command.tabID.flatMap(UUID.init(uuidString:))
+        let callerIsActive = parentID != nil && store.activeTabID == parentID
+        let previousDocument = store.activeDocumentTabID
+
+        layoutStore.revealStrip(for: .document)
+        let id = store.openDocumentTab(path: path, parentTabID: parentID)
+
+        if !callerIsActive, let previousDocument, previousDocument != id {
+            // Opened in the background: put the strip's selection back where it was.
+            store.focusTab(previousDocument)
+        }
+        respond(requestID, ["ok": true, "path": path, "tabID": id.uuidString,
+                            "focused": callerIsActive])
+    }
+
+    /// Reply on the same responses/ channel the browser verbs use.
+    private func respond(_ requestID: String?, _ payload: [String: Any]) {
+        guard let requestID, !requestID.isEmpty else { return }
+        let url = BrowserControl.responsesDirectory.appendingPathComponent("\(requestID).json")
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
+        let temp = url.deletingLastPathComponent().appendingPathComponent(".\(requestID).partial")
+        try? data.write(to: temp)
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.moveItem(at: temp, to: url)
     }
 
     /// A session asking for a real browser WINDOW — the one thing it cannot do for
