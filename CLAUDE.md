@@ -116,6 +116,47 @@ export DEV_ID_APPLICATION="Developer ID Application: ..."
 - Do not `gh release create` outside the script — use `--release`
 - Do not skip any step for "quick" releases — every release must be signed AND notarized
 
+## Testing
+
+Two tiers, and the split is not a compromise — they test different things.
+
+**Tier 1 — `swift test`.** Pure model and logic, no app, milliseconds, runs on every PR
+(`.github/workflows/tests.yml`). `@testable import ConsoleForge` reaches the executable
+target, so `WorkspaceLayout`, `LayoutStore`, `TabStripModel`, `ClaudeProcessBuilder`,
+`TerminalMetrics` and `SessionConfiguration` decoding are all directly testable. Nothing
+had to be refactored for this; there simply was no test target until 2026-08-21.
+
+**Tier 2 — the live harnesses in `scripts/`.** `geometry-pass.py` (terminal geometry
+through the real Layout menu) and `chrome-lifecycle-test.py` (25 teardown checks). These
+cover what a unit test structurally cannot: AppKit hosting, real SwiftTerm reflow, Chrome
+under launchd. Beta only. Do not try to move these into Tier 1 — and do not skip them for
+anything touching layout, terminal sizing, or the browser lifecycle.
+
+**Fixtures (`Tests/Fixtures/`) are shared by both tiers.** Every layout bug so far has been
+a SAVED STATE plus an ACTION, and the state kept getting hand-written as throwaway JSON at
+debug time. A fixture is named for the situation (`parked-in-occupied-cell`), decoded
+directly by Swift tests and copied into the beta support directory by the python harnesses
+— the same file, so a permutation checked in one tier cannot silently differ from the
+other. `Fixture.url` resolves from the source tree rather than a test bundle for exactly
+that reason.
+
+### The two rules that keep this true
+
+**A feature's acceptance criteria become its test names.** Not a paraphrase — the criteria
+ARE the list. Task 990039 shipped a bug because its criteria were prose and the
+occupied-target permutation was never written down; as test functions it would have been a
+visibly missing one.
+
+**A bug fix ships a test that FAILS without the fix.** Write it, watch it fail, then fix.
+This is the only mechanical proof the test covers the bug rather than the fix's happy path.
+`LayoutStoreMoveTests` was verified this way: reverting `move()` to its v0.9.7 form fails
+3 of its 5 tests on 6 assertions.
+
+**Corollary, earned:** a check that cannot run must FAIL, never pass quietly.
+`geometry-pass.py` once compared zero grid pushes because the beta had no open tabs — a
+check measuring nothing is indistinguishable from a check that passed. Both the CI job and
+that harness now refuse to report green on an empty run.
+
 ## Workspace slot layout
 
 The detail area is a **slot container** (`Views/Workspace/WorkspaceView.swift`), not a

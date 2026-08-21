@@ -37,6 +37,12 @@ final class LayoutStore {
     private(set) var layout: WorkspaceLayout
 
     private var loaded = false
+
+    /// False in tests: `save()` becomes a no-op so a test can never write over the
+
+    /// developer's real layout.json.
+
+    private var persists = true
     @ObservationIgnored private var saveTask: Task<Void, Never>?
 
     /// Live workspace width and the per-section width floors, published by
@@ -84,6 +90,20 @@ final class LayoutStore {
         }
         initial.normalize()
         layout = initial
+        loaded = true
+    }
+
+    /// Start from a known layout and never touch disk.
+    ///
+    /// The seam Tier 1 tests need: the mutations worth testing (`move`, `close`, `pin`)
+    /// live here rather than on the value type, and the normal `init` reads the real
+    /// support directory — so without this a test would either depend on the developer's
+    /// own saved layout or overwrite it. `persists: false` keeps `commit()` from writing.
+    init(layout: WorkspaceLayout, persists: Bool = false) {
+        var initial = layout
+        initial.normalize()
+        self.layout = initial
+        self.persists = persists
         loaded = true
     }
 
@@ -481,7 +501,7 @@ final class LayoutStore {
     }
 
     private func save() {
-        guard loaded else { return }
+        guard loaded, persists else { return }
         let snapshot = layout
         saveTask?.cancel()
         saveTask = Task {

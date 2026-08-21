@@ -1,0 +1,17 @@
+{
+  "browserURL": null,
+  "rows": [{"id": "top", "heightFraction": 1.0}],
+  "columns": [
+    {"id": "left", "isPinned": false, "widthFraction": 0.4},
+    {"id": "center", "isPinned": false, "widthFraction": 0.4},
+    {"id": "right", "isPinned": true, "widthFraction": 0.5}
+  ],
+  "slots": [
+    {"id": "topLeft", "isCollapsed": false, "isFloating": false, "pinnedFraction": 0.4},
+    {"id": "topCenter", "isCollapsed": false, "isFloating": false, "pinnedFraction": 0.4},
+    {"id": "topRight", "section": "console", "isCollapsed": false, "isFloating": false, "pinnedFraction": 0.4},
+    {"id": "bottomLeft", "isCollapsed": false, "isFloating": false, "pinnedFraction": 0.4},
+    {"id": "bottomCenter", "isCollapsed": false, "isFloating": false, "pinnedFraction": 0.4},
+    {"id": "bottomRight", "isCollapsed": false, "isFloating": false, "pinnedFraction": 0.4}
+  ]
+}
