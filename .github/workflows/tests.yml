@@ -10,12 +10,33 @@ on:
 
 jobs:
   test:
-    runs-on: macos-15
+    # macos-15 CANNOT build this project. Services/Voice/VoiceEngine.swift uses
+    # SpeechAnalyzer / SpeechTranscriber / SpeechDetector, which are macOS 26 APIs — and
+    # `@available(macOS 26, *)` does not help, because the SDK has to CONTAIN the symbols
+    # to compile at all. The deployment target stays macOS 14; it is the SDK that must be
+    # new, not the floor.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
       - name: Show toolchain
-        run: swift --version
+        run: |
+          swift --version
+          xcodebuild -version
+          echo "SDK: $(xcrun --show-sdk-version --sdk macosx)"
+
+      # Fail loudly and early if the runner image regresses to an SDK that cannot see
+      # the Speech APIs — otherwise the failure surfaces 90 seconds later as a wall of
+      # "cannot find type in scope" that reads like a code error rather than an image one.
+      - name: Require an SDK new enough for the Speech APIs
+        run: |
+          set -euo pipefail
+          SDK=$(xcrun --show-sdk-version --sdk macosx)
+          echo "macOS SDK: $SDK"
+          if [ "${SDK%%.*}" -lt 26 ]; then
+            echo "::error::SDK $SDK is too old — VoiceEngine needs the macOS 26 Speech APIs."
+            exit 1
+          fi
 
       - name: Build
         run: swift build
