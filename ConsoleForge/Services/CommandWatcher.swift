@@ -36,7 +36,8 @@ struct TabCommand: Codable {
     /// Relative scroll delta for `browser-scroll`.
     var scrollBy: Double?
     /// Where `browser-screenshot` should write its PNG. Defaults into the channel's
-    /// support directory when absent.
+    /// support directory when absent. Also the file `open-document` should open — the
+    /// two never appear in the same command, so one field serves both.
     var path: String?
 }
 

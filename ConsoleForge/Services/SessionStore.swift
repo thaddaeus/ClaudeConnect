@@ -41,6 +41,8 @@ class SessionStore {
     /// These get `--continue` to resume the Claude session.
     private(set) var resumingSessionIDs: Set<UUID> = []
     private var configLoaded = false
+    /// False in tests: `save()` becomes a no-op, so no test can reach the real store.
+    private var persists = true
     private var saveTask: Task<Void, Never>?
 
     private static var storageURL: URL {
@@ -52,6 +54,20 @@ class SessionStore {
         if folders.isEmpty {
             folders = [SessionFolder(name: "Sessions")]
         }
+        configLoaded = true
+    }
+
+    /// An empty store that never reads or writes disk.
+    ///
+    /// The seam Tier 1 tests need. Without it a test both inherits whatever sessions the
+    /// developer happens to have open AND can write into the real sessions.json — which
+    /// today is prevented only by `save()`'s 500 ms debounce losing the race with process
+    /// exit. That is luck, not isolation, and the first test that awaits anything would
+    /// spend it.
+    init(inMemory: Bool) {
+        precondition(inMemory, "use init() for the real store")
+        folders = [SessionFolder(name: "Sessions")]
+        persists = false
         configLoaded = true
     }
 
@@ -94,7 +110,7 @@ class SessionStore {
 
     func save() {
         // Don't save if we haven't loaded yet (prevents overwriting with empty data)
-        guard configLoaded else { return }
+        guard configLoaded, persists else { return }
 
         saveTask?.cancel()
         saveTask = Task {

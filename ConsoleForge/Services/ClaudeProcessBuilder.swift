@@ -245,6 +245,7 @@ struct ClaudeProcessBuilder {
       --close --name NAME      Close another tab by name
       --wait-for-close ID      Block until the tab closes, then print event JSON
       --timeout SECONDS        Max wait time (use with --wait-for-close)
+      --open-document PATH     Open a file in the app's Documents panel, for the human
       --browser-navigate URL   Point the app's in-app browser panel at a page
       --browser-eval SCRIPT    Run JavaScript in that panel and get its value back
       --browser-screenshot [P] Write a PNG of that panel; prints the path
@@ -254,6 +255,12 @@ struct ClaudeProcessBuilder {
       --browser-window [URL]   Open a real browser WINDOW owned by this tab, for a human
                                to look at or sign in to
       --browser-info           Print this tab's managed-browser ports as JSON
+
+    SHOWING THE HUMAN A FILE. `consoleforge-tab --open-document <path>` opens it in the \
+    app's Documents panel as a tab parented to yours. Use it when you have produced \
+    something worth reading — a report, a diff, a log — instead of pasting hundreds of \
+    lines into the terminal. It is read-only by design, so it is for showing, not editing. \
+    It answers with JSON and exits non-zero if the file does not exist.
 
     BROWSERS. There are two, and picking the right one is the whole thing.
 
