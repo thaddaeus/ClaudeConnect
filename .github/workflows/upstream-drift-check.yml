@@ -49,15 +49,28 @@ jobs:
       - name: Check SwiftTerm for new releases
         id: swiftterm
         run: |
-          PINNED=$(jq -r '.swiftterm.pinned_commit' .github/upstream-dependencies.json)
+          set -euo pipefail
+          # Compare TAG to TAG. The old check compared our pin against `main`'s HEAD,
+          # which moves constantly — so it reported "NEW COMMITS" every single Monday and
+          # would have gone on doing so forever. A checker that always warns is one you
+          # learn to skip, which is worse than no checker at all.
+          PINNED=$(jq -r '.swiftterm.pinned_version' .github/upstream-dependencies.json)
           LATEST_TAG=$(gh api repos/migueldeicaza/SwiftTerm/releases/latest --jq '.tag_name' 2>/dev/null || echo "unknown")
-          LATEST_SHA=$(gh api repos/migueldeicaza/SwiftTerm/commits/main --jq '.sha' 2>/dev/null || echo "unknown")
+          LATEST=${LATEST_TAG#v}
+
+          # The file is the BASELINE, so it has to agree with what we actually build. A
+          # drift check comparing against a stale reference is how this one spent four days
+          # reporting a commit we had already moved off.
+          DECLARED=$(grep -oE 'exact: *"[0-9]+\.[0-9]+\.[0-9]+"' Package.swift | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          echo "pinned(file)=$PINNED  pinned(Package.swift)=$DECLARED  latest=$LATEST"
+          if [ -n "$DECLARED" ] && [ "$DECLARED" != "$PINNED" ]; then
+            echo "::error::upstream-dependencies.json says $PINNED but Package.swift pins $DECLARED — the baseline is stale."
+            exit 1
+          fi
 
           echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
           echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-          echo "latest_sha=${LATEST_SHA:0:12}" >> "$GITHUB_OUTPUT"
-
-          if [ "${LATEST_SHA:0:12}" = "${PINNED:0:12}" ]; then
+          if [ "$LATEST" = "$PINNED" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -81,10 +94,9 @@ jobs:
           - **Status**: ${{ steps.check.outputs.changed == 'true' && '⚠️ NEW VERSION' || '✅ No change' }}
 
           ### SwiftTerm
-          - **Pinned commit**: \`${{ steps.swiftterm.outputs.pinned }}\`
-          - **Latest tag**: ${{ steps.swiftterm.outputs.latest_tag }}
-          - **Latest main**: \`${{ steps.swiftterm.outputs.latest_sha }}\`
-          - **Status**: ${{ steps.swiftterm.outputs.changed == 'true' && '⚠️ NEW COMMITS' || '✅ No change' }}
+          - **Pinned version**: ${{ steps.swiftterm.outputs.pinned }} (exact)
+          - **Latest release**: ${{ steps.swiftterm.outputs.latest_tag }}
+          - **Status**: ${{ steps.swiftterm.outputs.changed == 'true' && '⚠️ NEW RELEASE' || '✅ No change' }}
 
           ### What We Depend On (review against changelog)
 
@@ -95,7 +107,8 @@ jobs:
           ### Action Items
           - [ ] Check Claude CLI changelog for breaking changes to permission modes or flags
           - [ ] Verify our \`SessionConfiguration.PermissionMode\` enum matches current CLI
-          - [ ] Check if SwiftTerm updates include fixes we need (or break our kitty workaround)
+          - [ ] Check if the new SwiftTerm release includes fixes we need — and remember a
+                bump must be verified with ./scripts/geometry-pass.py on beta before it ships
           - [ ] If changes found, update \`.github/upstream-dependencies.json\` with new version
           REVIEW_EOF
 
