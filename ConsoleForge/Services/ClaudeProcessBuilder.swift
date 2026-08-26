@@ -184,7 +184,7 @@ struct ClaudeProcessBuilder {
         //
         // BUILT AS A DICTIONARY, NOT AN APPENDED ARRAY. These vars are already in the
         // app's own environment whenever the app was launched from inside a ConsoleForge
-        // tab — which is exactly how `dev.sh` and `beta.sh` launch it. Appending to the
+        // tab — which is exactly how `beta.sh` launches it. Appending to the
         // inherited list then produced envp with the key TWICE, stale first and correct
         // second, and the winner is decided by whoever re-imports the block: we spawn
         // `zsh -l -c`, and zsh keeps the FIRST occurrence (sh keeps the last). So every

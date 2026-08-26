@@ -20,12 +20,18 @@ swift build
 swift run
 ```
 
-### Beta channel (preferred for iteration)
+### Beta channel — the ONLY place testing happens
 
 `scripts/beta.sh` builds and signs a **separate** `/Applications/ConsoleForge Beta.app`
-that runs side by side with production and cannot touch its state. Use it instead of
-`dev.sh` whenever production has real sessions open — it never quits, pkills, or writes
-to `/Applications/ConsoleForge.app`.
+that runs side by side with production and cannot touch its state. It never quits,
+pkills, or writes to `/Applications/ConsoleForge.app`.
+
+**There is no production hot-swap, by decision.** A `scripts/dev.sh` used to build
+straight into the installed `/Applications/ConsoleForge.app` — quitting the running app,
+taking its live sessions with it, to test a build against the install you actually work
+in. That is not a dev loop, it is testing in prod, and the script was deleted (2026-08-26)
+rather than left as a footgun someone reaches for again. Production is built by
+`scripts/build.sh` and installed as a release; nothing else touches it.
 
 ```bash
 ./scripts/beta.sh              # release build, relaunch beta
@@ -37,8 +43,12 @@ to `/Applications/ConsoleForge.app`.
 xattr, which is set on *download* — a locally built app never has it. So beta is
 build + sign (seconds), not the `notarytool --wait` round trip. `spctl -a` still reports
 "rejected / Unnotarized Developer ID" because it assesses as-if-downloaded; that is not
-the check the launch path runs. Signing is still mandatory, for the Keychain reason in
-`dev.sh`'s header — a stable Developer ID keeps the designated requirement constant.
+the check the launch path runs. Signing is still mandatory for a Keychain reason: copying
+a fresh binary into a bundle invalidates its signature, so the Keychain treats each
+relaunch as a new untrusted app and forces the login-**password** prompt (Touch ID and
+Apple Watch cannot authorize a new app identity against an existing item). A stable
+Developer ID keeps the designated requirement constant — click "Always Allow" once and no
+later rebuild prompts.
 
 Beta diverges from production in five places. The bundle id is the master key; the app
 derives the rest from it in `AppChannel.swift`:
@@ -63,26 +73,6 @@ comes before the bundle's own copy on `PATH`, so the file on disk can't identify
 
 Beta's icon is the production icon hue-rotated (orange → cyan). Regenerate it with
 `python3 scripts/make-beta-icon.py` if `AppIcon.icns` is ever redesigned.
-
-### Production hot-swap
-
-Hot-swap the running app without a full release — **always use `scripts/dev.sh`**:
-```bash
-./scripts/dev.sh           # release config (default)
-./scripts/dev.sh debug     # faster debug build
-```
-
-The script does build → quit running app → swap binary into the **installed** app at
-`/Applications/ConsoleForge.app` → **re-sign with the Developer ID** → relaunch. It targets
-the prod install in place so the app you normally launch is the one you're testing. The
-re-sign step is mandatory: copying a fresh binary into the bundle invalidates its signature,
-so the Keychain treats every relaunch as a new untrusted app and forces the login-**password**
-prompt on the companion token read (Touch ID / Apple Watch cannot authorize a new app identity
-against an existing item). Re-signing with the stable Developer ID keeps a constant designated
-requirement — click "Always Allow" once and no future hot-swap prompts. (Re-signing locally
-strips the notarization staple from this install until the next `./scripts/build.sh` install —
-expected for a dev build.) **Never hand-swap with a bare `cp` + `open`** (the old recipe); it
-reintroduces the password storm.
 
 ## Releasing
 

@@ -91,15 +91,19 @@ class SessionStore {
                 ?? tabIDs(.document).last
 
             // Mark restored open tabs to resume their prior Claude session. In prod
-            // only ephemeral tabs resume; under dev hot-swap every open tab resumes
-            // so a build relaunch continues each tab's conversation. Resume is keyed
+            // only ephemeral tabs resume; OFF production every open tab resumes so a
+            // build relaunch continues each tab's conversation — beta is rebuilt and
+            // relaunched constantly, and that is where all testing happens. (This used
+            // to key on a `--dev-hotswap` argument passed by `scripts/dev.sh`; that
+            // script is gone, because testing against the production install was never
+            // an acceptable option.) Resume is keyed
             // to each tab's own Claude session id (see SessionConfiguration.claudeSessionID
             // and ClaudeProcessBuilder), so tabs sharing a working directory never
             // collide — unlike `--continue`, which would interleave them.
             // `.isTerminal` first: resuming is a PTY concept, and a restored document tab
             // must never be handed to `--resume`.
             for session in sessions where session.isTerminal && openTabIDs.contains(session.id) {
-                if session.isEphemeral || DevMode.isHotSwap {
+                if session.isEphemeral || !AppChannel.isProduction {
                     resumingSessionIDs.insert(session.id)
                 }
             }
