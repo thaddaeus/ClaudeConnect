@@ -73,6 +73,18 @@ final class ManagedChrome {
 
     /// Chrome, if it is installed. Canary and Chromium are accepted so a machine without
     /// stable Chrome is not silently dead — the menu item disables itself instead.
+    /// Every browser we launch carries this, and so must every browser launched on our
+    /// behalf — see `writeSessionMCPConfig` and `scripts/consoleforge-chrome-mcp`. It is a
+    /// single constant because the failure mode of it being applied on only SOME paths is
+    /// silent: chrome-devtools-mcp launching its own Chrome against our profile directory
+    /// gets Puppeteer's default flag set instead of ours, the LNA disables vanish, and a
+    /// public page's request to a VPN address dies with
+    /// ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS while `ps` still shows OTHER tabs'
+    /// correctly-flagged browsers. That is exactly how this went unnoticed.
+    static let localNetworkAccessFlag =
+        "--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessChecksWebSockets," +
+        "LocalNetworkAccessChecksWebTransport,LocalNetworkAccessChecksWebRTC"
+
     static let binary: String? = {
         let candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -164,8 +176,7 @@ final class ManagedChrome {
             // Scoped and deliberate: these profiles exist to reach the user's own
             // development machines, they are isolated per tab, and they are thrown away
             // with the tab. This is NOT applied to any browser the user already had.
-            "--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessChecksWebSockets," +
-            "LocalNetworkAccessChecksWebTransport,LocalNetworkAccessChecksWebRTC",
+            Self.localNetworkAccessFlag,
         ]
         if mode == .headless {
             // The point of the mode: no window is ever created, so nothing can take focus
@@ -268,6 +279,12 @@ final class ManagedChrome {
                 "command": "npx",
                 "args": ["-y", "chrome-devtools-mcp@latest",
                          "--headless",
+                         // The server launches Chrome itself here, so our own flags never
+                         // run — --chromeArg is the only way they reach that browser.
+                         // Must be ONE `=`-joined token: a space-separated value that
+                         // itself starts with `--` is parsed as a separate flag and the
+                         // server exits with `Unknown arguments: --disableFeatures`.
+                         "--chromeArg=\(Self.localNetworkAccessFlag)",
                          "--userDataDir", Self.profileURL(for: tabID, mode: .headless).path],
             ]
         }

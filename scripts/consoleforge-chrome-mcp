@@ -17,6 +17,18 @@ the MCP server and would outlive the tab, which is the whole promise of the feat
 import json, os, subprocess, sys, time, urllib.request
 
 MCP_PACKAGE = "chrome-devtools-mcp@latest"
+# MUST match ManagedChrome.localNetworkAccessFlag. When we cannot hand the server a
+# managed browser it launches its own, with Puppeteer's default flags rather than ours —
+# and a page's request to a VPN/LAN address then dies with
+# ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS. --chromeArg only applies on that
+# self-launched path, so it is safe to pass alongside --browserUrl too.
+LOCAL_NETWORK_ACCESS_FLAG = (
+    "--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessChecksWebSockets,"
+    "LocalNetworkAccessChecksWebTransport,LocalNetworkAccessChecksWebRTC"
+)
+# ONE `=`-joined token: a space-separated value beginning with `--` is parsed as its
+# own flag and the server exits with `Unknown arguments: --disableFeatures`.
+CHROME_ARGS = ["--chromeArg=" + LOCAL_NETWORK_ACCESS_FLAG]
 # Chrome cold-starts in about a second; a slow machine under load can take several.
 STARTUP_TIMEOUT = 25.0
 
@@ -75,7 +87,7 @@ def main():
     # No tab identity means we are not inside a ConsoleForge session — fall straight
     # through to the stock server so nothing is worse off than before.
     if not tab_id:
-        os.execvp("npx", ["npx", "-y", MCP_PACKAGE] + passthrough)
+        os.execvp("npx", ["npx", "-y", MCP_PACKAGE] + CHROME_ARGS + passthrough)
 
     url = headless_url(tab_id)
     if not (url and answers(url)):
@@ -94,7 +106,7 @@ def main():
     # than to leave the session with no browser tooling at all.
     print(f"consoleforge-chrome-mcp: no managed browser for tab {tab_id}; "
           f"falling back to a self-launched one", file=sys.stderr)
-    os.execvp("npx", ["npx", "-y", MCP_PACKAGE] + passthrough)
+    os.execvp("npx", ["npx", "-y", MCP_PACKAGE] + CHROME_ARGS + passthrough)
 
 
 if __name__ == "__main__":
