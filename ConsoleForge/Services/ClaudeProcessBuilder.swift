@@ -104,7 +104,13 @@ struct ClaudeProcessBuilder {
             let head = line.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? line
             return head == "--name" || head == "-n" || head.hasPrefix("--name=") || head.hasPrefix("-n=")
         }
-        let sessionName = config.name.trimmingCharacters(in: .whitespaces)
+        // NOT "purely a display label", whatever this comment used to say: SendMessage
+        // addresses peers BY NAME, so two live sessions sharing one is two sessions
+        // sharing an address. On 2026-08-19 three answered to "Hub" and a spoke reported
+        // completion to the wrong one (task 990003). Claimed against LIVE peers only —
+        // a historical row must not reserve the name forever, or the hub becomes
+        // un-addressable after its first run.
+        let sessionName = SessionNameRegistry.resolveName(for: config.name)
         if !sessionName.isEmpty, !userNamedSession {
             parts.append(contentsOf: ["--name", shellQuote(sessionName)])
         }
