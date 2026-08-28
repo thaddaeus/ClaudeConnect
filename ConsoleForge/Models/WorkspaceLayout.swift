@@ -657,16 +657,43 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
         // Walk the grid: a section where there is one, a GAP where the column is live
         // and the cell is not. The gap is the whole of rule 7 — the space a named slot
         // owns, held open, and a drop target that fills it exactly.
+        //
+        // A column holding exactly ONE section SPANS the live rows. Rows exist to divide
+        // a column between two sections; where there is only one, there is nothing to
+        // divide, and the row boundary was pure loss — Web Output alone in bottomCenter
+        // made a bottom row that the left and right columns then had to leave empty, so
+        // one panel cost two dead cells and shortened the console for nothing. This is
+        // the same rule the engine already applies to a lone ROW filling the height,
+        // finally applied per COLUMN.
+        let visibleCells = Set(SlotID.allCases.filter(isVisible))
+        var spanning: [SlotColumn: SlotID] = [:]
+        for column in liveColumns {
+            let inColumn = visibleCells.filter { $0.column == column && liveRows.contains($0.row) }
+            if inColumn.count == 1, let only = inColumn.first { spanning[column] = only }
+        }
+        let liveHeight = liveRows.reduce(0) { $0 + (heights[$1] ?? 0) }
+        // A row splitter divides a column between two sections. If EVERY live column
+        // spans, it would be a handle that edits a number nothing renders.
+        let anyColumnIsDivided = liveColumns.contains { spanning[$0] == nil }
+
         var y: CGFloat = 0
         var previousRow: SlotRow?
         for row in SlotRow.allCases {
             guard liveRows.contains(row), let rowHeight = heights[row], rowHeight > 0 else { continue }
-            if let previousRow {
+            if let previousRow, anyColumnIsDivided {
                 result.rowSplitters.append(RowSplitterPosition(above: previousRow, below: row, y: y))
             }
             for column in liveColumns {
                 guard let width = widths[column], width > 0, let x = origins[column] else { continue }
                 let id = SlotID.at(row, column)
+                if let sole = spanning[column] {
+                    // Emitted once, at full height; the column's other cell is consumed
+                    // by the span and is NOT a gap — there is no space left to hold open.
+                    if id == sole {
+                        result.tiled[id] = CGRect(x: x, y: 0, width: width, height: liveHeight)
+                    }
+                    continue
+                }
                 let rect = CGRect(x: x, y: y, width: width, height: rowHeight)
                 if isVisible(id) { result.tiled[id] = rect } else { result.gaps[id] = rect }
             }
