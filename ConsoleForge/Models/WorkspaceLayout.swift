@@ -375,6 +375,24 @@ struct WorkspaceLayout: Codable, Equatable, Sendable {
 
     /// Does this column hold any section at all — on screen or merely collapsed?
     /// A column with nothing left in it is what `move` releases the pin on.
+    /// Whether an empty cell should PAINT itself, as opposed to merely reserving space.
+    ///
+    /// Every live row x live column with nothing in it is a gap, so a single panel in the
+    /// bottom row of one column makes gaps of the bottom cell of every OTHER live column
+    /// too. Opening Web Output into bottomCenter turned a two-panel window into three
+    /// labelled dashed rectangles — the grid announcing its own internal structure at the
+    /// user, which is not information anyone asked for.
+    ///
+    /// So the space is still reserved (the columns must line up), but it is only DRAWN
+    /// when drawing it says something:
+    ///   * mid-drag, when it is a live drop target the pointer can aim at, or
+    ///   * when the column is pinned and empty — a position deliberately held open, which
+    ///     the user set and would otherwise have no evidence of.
+    /// An incidental empty cell is neither, and stays quiet.
+    static func shouldPaintGap(held: Bool, isDragging: Bool) -> Bool {
+        held || isDragging
+    }
+
     func isEmpty(_ column: SlotColumn) -> Bool {
         slots(in: column).allSatisfy { $0.section == nil }
     }

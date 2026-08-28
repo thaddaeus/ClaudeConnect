@@ -266,25 +266,32 @@ struct WorkspaceView: View {
                 let column = layout.column(id.column)
                 let held = column.isPinned && layout.layout.isEmpty(id.column)
                 let percent = Int((column.pinnedFraction * 100).rounded())
+                // Reserved either way — only DRAWN when the drawing means something.
+                let paint = WorkspaceLayout.shouldPaintGap(held: held,
+                                                           isDragging: draggingSection != nil)
                 VStack(spacing: 3) {
-                    Image(systemName: "rectangle.dashed")
-                        .font(.system(size: 14))
-                    Text(id.title)
-                        .font(.system(size: 10, weight: .medium))
-                    Text(held ? "held at \(percent)%" : "empty")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
+                    if paint {
+                        Image(systemName: "rectangle.dashed")
+                            .font(.system(size: 14))
+                        Text(id.title)
+                            .font(.system(size: 10, weight: .medium))
+                        Text(held ? "held at \(percent)%" : "empty")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .foregroundStyle(.secondary)
                 .frame(width: rect.width, height: rect.height)
-                .background(Color(nsColor: .underPageBackgroundColor))
+                .background(paint ? Color(nsColor: .underPageBackgroundColor) : Color.clear)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(hoveredDropSlot == id ? Color.accentColor
-                                                            : Color(nsColor: .separatorColor),
-                                      style: StrokeStyle(lineWidth: hoveredDropSlot == id ? 2 : 1,
-                                                         dash: [5, 4]))
-                        .padding(4)
+                    if paint {
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(hoveredDropSlot == id ? Color.accentColor
+                                                                : Color(nsColor: .separatorColor),
+                                          style: StrokeStyle(lineWidth: hoveredDropSlot == id ? 2 : 1,
+                                                             dash: [5, 4]))
+                            .padding(4)
+                    }
                 }
                 .contentShape(Rectangle())
                 .help(held
