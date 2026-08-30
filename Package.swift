@@ -38,7 +38,7 @@ let package = Package(
                 // the packaged .app. The binary links @rpath/Sparkle.framework/...;
                 // without this rpath only the dev build (framework sitting next to the
                 // binary in .build, found via @loader_path) would load it, and a
-                // dev.sh hot-swap into /Applications would crash on the missing dylib.
+                // build installed into /Applications would crash on the missing dylib.
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
         ),
