@@ -1,7 +1,7 @@
 {
   "_comment": "Tracks upstream interfaces ConsoleForge depends on. The GHA drift-check workflow compares new Claude CLI releases against this file and opens an issue if review is needed.",
   "claude-cli": {
-    "last_known_version": "2.1.241",
+    "last_known_version": "2.1.251",
     "npm_package": "@anthropic-ai/claude-code",
     "permission_modes": [
       "manual",
@@ -28,7 +28,7 @@
       "CONSOLEFORGE_SESSION_NAME"
     ],
     "terminal_protocols": {
-      "kitty_keyboard": "disabled \u2014 stripped in SwiftTermView.swift to prevent arrow key issues"
+      "kitty_keyboard": "disabled — stripped in SwiftTermView.swift to prevent arrow key issues"
     },
     "effort_levels": [
       "low",
@@ -42,7 +42,7 @@
     "pinned_version": "1.19.0",
     "pin_style": "exact",
     "pin_reason": "EXACT, never `from:`. SwiftTerm owns the buffer model behind the permanent-garble class (tasks 9543 / 9487), so a version bump is a change to be VERIFIED with ./scripts/geometry-pass.py on beta, not a floor to float on. Two things since v1.16.0 are why: the cell width snaps to the NEAREST device pixel rather than rounding up (so TerminalMetrics is backing-scale dependent), and the per-cell write path gained semantic/bidi state.",
-    "supersedes": "Was the bare revision 0f2af750 because PR #500 (kitty sequences misread as cursor restore) had no tagged release. It has shipped in every tag from v1.13.0 on, so the pin became a tag in v0.9.5 \u2014 this file was not updated then, and reported a stale commit for four days."
+    "supersedes": "Was the bare revision 0f2af750 because PR #500 (kitty sequences misread as cursor restore) had no tagged release. It has shipped in every tag from v1.13.0 on, so the pin became a tag in v0.9.5 — this file was not updated then, and reported a stale commit for four days."
   },
   "macos": {
     "minimum_version": "14.0",
