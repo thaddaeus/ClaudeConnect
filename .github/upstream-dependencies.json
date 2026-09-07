@@ -1,7 +1,7 @@
 {
   "_comment": "Tracks upstream interfaces ConsoleForge depends on. The GHA drift-check workflow compares new Claude CLI releases against this file and opens an issue if review is needed.",
   "claude-cli": {
-    "last_known_version": "2.1.251",
+    "last_known_version": "2.1.263",
     "npm_package": "@anthropic-ai/claude-code",
     "permission_modes": [
       "manual",
